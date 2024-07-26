@@ -2,6 +2,7 @@
 
 CUDA 3D ops as PyTorch extensions.
 
-## To do
+## Ops
 
-- [ ] Add bilinear splat to images at flow field locations
+- `iterative_3d_warp`: iterative 3D warping of points following XY flow fields at regular Z intervals to these intervals
+- `trilinear_splat`: trilinear splat to images at regular Z intervals (WIP)

@@ -6,19 +6,22 @@ __global__ void iterative_3d_warp_kernel(
     const float* __restrict__ points, 
     const float* __restrict__ flow_fields, 
     float* __restrict__ warped_points,
-    int num_points, int num_z, int height, int width,
+    int batch_size, int num_points, int num_flow_fields, int num_z, int height, int width,
     float x_min, float x_max, float y_min, float y_max) {
     
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    if (idx >= num_points) return;
+    if (idx >= batch_size * num_points) return;
+
+    int batch_idx = idx / num_points;
+    int point_idx = idx % num_points;
 
     // load point coordinates
-    float x = points[idx * 4];
-    float y = points[idx * 4 + 1];
-    float z = points[idx * 4 + 2];
+    float x = points[batch_idx * num_points * 4 + point_idx * 4];
+    float y = points[batch_idx * num_points * 4 + point_idx * 4 + 1];
+    float z = points[batch_idx * num_points * 4 + point_idx * 4 + 2];
 
     // keep track of original z value, value and out of bounds status
-    float val = points[idx * 4 + 3];
+    float val = points[batch_idx * num_points * 4 + point_idx * 4 + 3];
     float z_orig = z;
     bool is_out_of_bounds = false;
 
@@ -29,7 +32,7 @@ __global__ void iterative_3d_warp_kernel(
         float dz = z1 - z;
 
         // get the corresponding flow field
-        const float* flow_field = flow_fields + z0 * height * width * 2;
+        const float* flow_field = flow_fields + batch_idx * num_flow_fields * height * width * 2 + z0 * height * width * 2;
 
         // bilinear interpolation to get flow at (x, y)
         int x0 = static_cast<int>(floor(x));
@@ -63,7 +66,7 @@ __global__ void iterative_3d_warp_kernel(
         z = z1;  // need int; same as z += dz
 
         // save warped point position
-        int output_idx = idx * num_z * 5 + z * 5;
+        int output_idx = batch_idx * num_points * num_z * 5 + point_idx * num_z * 5 + z * 5;
         warped_points[output_idx] = x;
         warped_points[output_idx + 1] = y;
         warped_points[output_idx + 2] = z;
@@ -78,9 +81,9 @@ __global__ void iterative_3d_warp_kernel(
     }
 
     // reload point coordinates
-    x = points[idx * 4];
-    y = points[idx * 4 + 1];
-    z = points[idx * 4 + 2];
+    x = points[batch_idx * num_points * 4 + point_idx * 4];
+    y = points[batch_idx * num_points * 4 + point_idx * 4 + 1];
+    z = points[batch_idx * num_points * 4 + point_idx * 4 + 2];
 
     // warp backward: decreasing z values
     // start with previous integer z value
@@ -89,7 +92,7 @@ __global__ void iterative_3d_warp_kernel(
         float dz = z - z1;
 
         // get the corresponding flow field
-        const float* flow_field = flow_fields + z0 * height * width * 2;
+        const float* flow_field = flow_fields + batch_idx * num_flow_fields * height * width * 2 + z0 * height * width * 2;
 
         // bilinear interpolation to get flow at (x, y)
         int x0 = static_cast<int>(floor(x));
@@ -123,7 +126,7 @@ __global__ void iterative_3d_warp_kernel(
         z = z1;  // need int; same as z -= dz
 
         // save warped point position
-        int output_idx = idx * num_z * 5 + z * 5;
+        int output_idx = batch_idx * num_points * num_z * 5 + point_idx * num_z * 5 + z * 5;
         warped_points[output_idx] = x;
         warped_points[output_idx + 1] = y;
         warped_points[output_idx + 2] = z;
@@ -152,16 +155,26 @@ torch::Tensor iterative_3d_warp_cuda(
     torch::Tensor flow_fields,
     float x_min, float x_max, float y_min, float y_max) {
 
-    auto warped_points = torch::zeros({points.size(0), flow_fields.size(0) + 1, 5}, points.options());
+    int batch_size = points.size(0);
+    int num_points = points.size(1);
+    int num_flow_fields = flow_fields.size(1);
+    int num_z = num_flow_fields + 1;
+    int height = flow_fields.size(2);
+    int width = flow_fields.size(3);
+
+    // points: (b, n, 4)
+    // flow_fields: (b, d, h, w, 2)
+    // warped_points: (b, n, d + 1, 5)
+    auto warped_points = torch::zeros({batch_size, num_points, num_z, 5}, points.options());
 
     int threads = 1024;
-    int blocks = (points.size(0) + threads - 1) / threads;
+    int blocks = (batch_size * num_points + threads - 1) / threads;
 
     iterative_3d_warp_kernel<<<blocks, threads>>>(
         points.data_ptr<float>(),
         flow_fields.data_ptr<float>(),
         warped_points.data_ptr<float>(),
-        points.size(0), flow_fields.size(0) + 1, flow_fields.size(1), flow_fields.size(2),
+        batch_size, num_points, num_flow_fields, num_z, height, width,
         x_min, x_max, y_min, y_max);
 
     return warped_points;
