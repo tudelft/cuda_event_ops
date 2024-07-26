@@ -7,7 +7,7 @@ setup(
     ext_modules=[
         CUDAExtension(
             "cuda_3d_ops",
-            ["iterative_3d_warp.cpp", "iterative_3d_warp_kernel.cu"],
+            ["iterative_3d_warp/extension.cpp", "iterative_3d_warp/kernel.cu"],
             extra_compile_args={"cxx": ["-O3"], "nvcc": ["-O3"]},
         ),
     ],
