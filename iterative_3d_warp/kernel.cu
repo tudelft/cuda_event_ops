@@ -40,8 +40,7 @@ __global__ void iterative_3d_warp_kernel(
     const float* __restrict__ points, 
     const float* __restrict__ flow_fields, 
     float* __restrict__ warped_points,
-    int batch_size, int num_points, int num_flow_fields, int num_z, int height, int width,
-    float x_min, float x_max, float y_min, float y_max) {
+    int batch_size, int num_points, int num_flow_fields, int num_z, int height, int width) {
     
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx >= batch_size * num_points) return;
@@ -151,8 +150,7 @@ __global__ void iterative_3d_warp_backward_kernel(
     const float* __restrict__ warped_points,
     float* __restrict__ grad_points,
     float* __restrict__ grad_flow_fields,
-    int batch_size, int num_points, int num_flow_fields, int num_z, int height, int width,
-    float x_min, float x_max, float y_min, float y_max) {
+    int batch_size, int num_points, int num_flow_fields, int num_z, int height, int width) {
 
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx >= batch_size * num_points) return;
@@ -164,6 +162,7 @@ __global__ void iterative_3d_warp_backward_kernel(
     if (warped_points[batch_idx * num_points * num_z * 5 + point_idx * num_z * 5 + 4] == 0) return;
 
     // load starting z
+    // TODO: load from warped_points
     float z_orig = points[batch_idx * num_points * 4 + point_idx * 4 + 2];
 
     // iterate over z values in reverse for forward warping gradient computation
@@ -238,8 +237,7 @@ __global__ void iterative_3d_warp_backward_kernel(
 
 torch::Tensor iterative_3d_warp_cuda(
     torch::Tensor points,
-    torch::Tensor flow_fields,
-    float x_min, float x_max, float y_min, float y_max) {
+    torch::Tensor flow_fields) {
 
     int batch_size = points.size(0);
     int num_points = points.size(1);
@@ -260,8 +258,7 @@ torch::Tensor iterative_3d_warp_cuda(
         points.data_ptr<float>(),
         flow_fields.data_ptr<float>(),
         warped_points.data_ptr<float>(),
-        batch_size, num_points, num_flow_fields, num_z, height, width,
-        x_min, x_max, y_min, y_max);
+        batch_size, num_points, num_flow_fields, num_z, height, width);
 
     return warped_points;
 }
@@ -271,8 +268,7 @@ std::vector<torch::Tensor> iterative_3d_warp_backward_cuda(
     torch::Tensor grad_output,
     torch::Tensor points,
     torch::Tensor flow_fields,
-    torch::Tensor warped_points,
-    float x_min, float x_max, float y_min, float y_max) {
+    torch::Tensor warped_points) {
 
     int batch_size = points.size(0);
     int num_points = points.size(1);
@@ -294,8 +290,7 @@ std::vector<torch::Tensor> iterative_3d_warp_backward_cuda(
         warped_points.data_ptr<float>(),
         grad_points.data_ptr<float>(),
         grad_flow_fields.data_ptr<float>(),
-        batch_size, num_points, num_flow_fields, num_z, height, width,
-        x_min, x_max, y_min, y_max);
+        batch_size, num_points, num_flow_fields, num_z, height, width);
 
     return {grad_points, grad_flow_fields};
 }

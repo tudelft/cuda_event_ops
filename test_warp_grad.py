@@ -1,8 +1,9 @@
-from math import ceil, floor
+from math import floor
 
 import torch
 
 from iterative_3d_warp import iterative_3d_warp
+from test_warp import iterative_3d_warp_torch
 
 
 def trilinear_splat_torch(events, grid_resolution):
@@ -54,22 +55,30 @@ def trilinear_splat_torch(events, grid_resolution):
     return output
 
 
-# test 1: deterministic xyz and flow
-flow_mag = 0.5
-b, d, h, w = 1, 3, 5, 5
-events = torch.tensor([[[1, 1, 1.5, 0.9]]], device="cuda")  # (b, n, 4): x, y, z, val
-flows = torch.ones(b, d, h, w, 2, device="cuda") * flow_mag  # (b, d, h, w, 2): u, v flow from z to z+1
-flows.requires_grad = True
-xy_bounds = (0, w, 0, h)
+if __name__ == "__main__":
+    # test 1: deterministic xyz and flow
+    flow_mag = 0.5
+    b, d, h, w = 1, 3, 5, 5
+    events = torch.tensor([[[1, 1, 1.5, 0.9]]], device="cuda")  # (b, n, 4): x, y, z, val
+    flows = torch.ones(b, d, h, w, 2, device="cuda") * flow_mag  # (b, d, h, w, 2): u, v flow from z to z+1
 
-warped_events = iterative_3d_warp(events, flows, *xy_bounds)  # (b, n, d + 1, 5): x, y, z, z_orig, val
-print(f"Original events with shape {tuple(events.shape)}:\n{events}\n")
-print(f"Flow with shape {tuple(flows.shape)} and magnitude {flow_mag}\n")
-print(f"Warped events with shape {tuple(warped_events.shape)}:\n{warped_events}\n")
+    flows_cuda = flows.clone().requires_grad_()
+    flows_torch = flows.clone().requires_grad_()
+    warped_events_cuda = iterative_3d_warp(events, flows_cuda)  # (b, n, d + 1, 5): x, y, z, z_orig, val
+    warped_events_torch = iterative_3d_warp_torch(events, flows_torch)
+    print(f"Original events with shape {tuple(events.shape)}:\n{events}\n")
+    print(f"Warped events (cuda) with shape {tuple(warped_events_cuda.shape)}:\n{warped_events_cuda}\n")
+    print(f"Warped events (torch) with shape {tuple(warped_events_torch.shape)}:\n{warped_events_torch}\n")
 
-warped_events = torch.cat([warped_events[:, :, :, :3], warped_events[:, :, :, 4:]], dim=-1)  # (b, n, d + 1, 4): x, y, z, val
-splatted = trilinear_splat(warped_events.view(b, -1, 4), (d + 1, h, w))
-loss = splatted.sum()
-loss.backward()
-print(f"Splatted image with shape {tuple(splatted.shape)}:\n{splatted}\n")
-print(f"Flow gradients:\n{flows.grad}\n")
+    warped_events_cuda = torch.cat([warped_events_cuda[:, :, :, :3], warped_events_cuda[:, :, :, 4:]], dim=-1)  # (b, n, d + 1, 4): x, y, z, val
+    warped_events_torch = torch.cat([warped_events_torch[:, :, :, :3], warped_events_torch[:, :, :, 4:]], dim=-1)
+    splatted_cuda = trilinear_splat_torch(warped_events_cuda.view(b, -1, 4), (d + 1, h, w))
+    splatted_torch = trilinear_splat_torch(warped_events_torch.view(b, -1, 4), (d + 1, h, w))
+    loss_cuda = splatted_cuda.diff(dim=1).abs().sum()
+    loss_torch = splatted_torch.diff(dim=1).abs().sum()
+    loss_cuda.backward()
+    loss_torch.backward()
+    print(f"Splatted image (cuda) with shape {tuple(splatted_cuda.shape)}:\n{splatted_cuda}\n")
+    print(f"Splatted image (torch) with shape {tuple(splatted_torch.shape)}:\n{splatted_torch}\n")
+    print(f"Flow gradients (cuda) :\n{flows_cuda.grad}\n")
+    print(f"Flow gradients (torch) :\n{flows_torch.grad}\n")
