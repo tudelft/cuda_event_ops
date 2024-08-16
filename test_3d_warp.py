@@ -40,9 +40,11 @@ def visualize_tensor(tensor, title="", figsize=(6, 2), folder="figures/test_3d_w
 def single_3d_warp(point, flow_field):
 
     def trilinear_interpolation(x, y, z, flow_field):
+        # determine voxel indices
         x0, y0, z0 = floor(x), floor(y), floor(z)
         x1, y1, z1 = x0 + 1, y0 + 1, z0 + 1
 
+        # get corner flows
         f000 = flow_field[z0, y0, x0]
         f001 = flow_field[z0, y0, x1]
         f010 = flow_field[z0, y1, x0]
@@ -53,6 +55,7 @@ def single_3d_warp(point, flow_field):
         f110 = flow_field[z1, y1, x0]
         f111 = flow_field[z1, y1, x1]
 
+        # compute weights
         w000 = (z1 - z) * (y1 - y) * (x1 - x)
         w001 = (z1 - z) * (y1 - y) * (x - x0)
         w010 = (z1 - z) * (y - y0) * (x1 - x)
@@ -63,6 +66,7 @@ def single_3d_warp(point, flow_field):
         w110 = (z - z0) * (y - y0) * (x1 - x)
         w111 = (z - z0) * (y - y0) * (x - x0)
 
+        # compute flow
         flow = (
             w000 * f000 +
             w001 * f001 +
@@ -184,27 +188,30 @@ def trilinear_splat(points, grid_resolution):
         for ni in range(n):
             x, y, z = points[bi, ni]
 
+            # determine voxel indices
             x0, y0, z0 = floor(x), floor(y), floor(z)
             x1, y1, z1 = x0 + 1, y0 + 1, z0 + 1
 
-            xd, yd, zd = x - x0, y - y0, z - z0
-            wx0, wy0, wz0 = 1 - xd, 1 - yd, 1 - zd
-            wx1, wy1, wz1 = xd, yd, zd
+            # compute weights
+            dx, dy, dz = x - x0, y - y0, z - z0
+            wx0, wy0, wz0 = 1 - dx, 1 - dy, 1 - dz
+            wx1, wy1, wz1 = dx, dy, dz
 
+            # make sure indices are within bounds
             if 0 <= x0 < w and 0 <= y0 < h and 0 <= z0 < d:
                 output[bi, z0, y0, x0] += val * wx0 * wy0 * wz0
-            if 0 <= x0 < w and 0 <= y1 < h and 0 <= z0 < d:
-                output[bi, z0, y1, x0] += val * wx0 * wy1 * wz0
             if 0 <= x1 < w and 0 <= y0 < h and 0 <= z0 < d:
                 output[bi, z0, y0, x1] += val * wx1 * wy0 * wz0
+            if 0 <= x0 < w and 0 <= y1 < h and 0 <= z0 < d:
+                output[bi, z0, y1, x0] += val * wx0 * wy1 * wz0
             if 0 <= x1 < w and 0 <= y1 < h and 0 <= z0 < d:
                 output[bi, z0, y1, x1] += val * wx1 * wy1 * wz0
             if 0 <= x0 < w and 0 <= y0 < h and 0 <= z1 < d:
                 output[bi, z1, y0, x0] += val * wx0 * wy0 * wz1
-            if 0 <= x0 < w and 0 <= y1 < h and 0 <= z1 < d:
-                output[bi, z1, y1, x0] += val * wx0 * wy1 * wz1
             if 0 <= x1 < w and 0 <= y0 < h and 0 <= z1 < d:
                 output[bi, z1, y0, x1] += val * wx1 * wy0 * wz1
+            if 0 <= x0 < w and 0 <= y1 < h and 0 <= z1 < d:
+                output[bi, z1, y1, x0] += val * wx0 * wy1 * wz1
             if 0 <= x1 < w and 0 <= y1 < h and 0 <= z1 < d:
                 output[bi, z1, y1, x1] += val * wx1 * wy1 * wz1
 

@@ -34,7 +34,7 @@ def iterative_3d_warp_torch(events, flows, mode="bilinear"):
         wx1, wy1, wz1 = dx, dy, dz
 
         # compute flow
-        # make sure indices are within bounds
+        # make sure indices are within bounds because we warp to edge of z
         flow = 0
         if 0 <= x0 < w and 0 <= y0 < h and 0 <= z0 < d:
             flow += flows[z0, y0, x0] * wx0 * wy0 * wz0
