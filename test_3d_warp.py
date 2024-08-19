@@ -198,7 +198,7 @@ class Iterative3dWarpCustom(torch.autograd.Function):
 
         for bi in range(b):
             for ni in range(n):
-                grad_warped_point, grad_point = 0, 0
+                grad_warped_point = 0
                 for wi in reversed(range(warps)):
                     grad_warped_point += grad_output[bi, ni * warps + wi]
 

@@ -2,6 +2,7 @@ from math import floor, ceil
 
 import torch
 
+from iterative_3d_warp import iterative_3d_warp as iterative_3d_warp_cuda
 from test_3d_warp import visualize_tensor
 
 
@@ -109,7 +110,6 @@ def iterative_3d_warp_torch(events, flows, mode="bilinear"):
             
                 # check if out of bounds
                 if out_of_bounds(x, y):
-                    print("out of bounds")
                     is_out_of_bounds = True
                     break
                     
@@ -206,33 +206,45 @@ NOTE:
 
 
 if __name__ == "__main__":
-    # torch.manual_seed(0)
-    n = 1
-    b, d, h, w = 1, 3, 5, 5
-    events = torch.tensor([[[1.0, 1.0, 0.1, 1.0]]], device="cuda")  # (b, n, 4): x, y, z, val
-    # events = torch.rand((b, n, 4), device="cuda") * torch.tensor([w - 1, h - 1, d - 1, 1.0], device="cuda")
-    flows = torch.zeros((b, d, h, w, 2), device="cuda")  # (b, d, h, w, 2): u, v flow from z to z+1
-    flows [0, 0, 1, 1, 0] = 1
-    flows [0, 1, 1, 2, 0] = 1
-    flows [0, 2, 1, 3, 0] = 1
-    # flow_mag = torch.tensor([0.5, 0.0], device="cuda")
-    # flows = torch.rand((b, 1, h, w, 2), device="cuda").repeat(1, d, 1, 1, 1) * flow_mag
-    flows.requires_grad = True
-    visualize_tensor(flows[..., 0].detach(), title="x flow field", folder="figures/test_warp_grad")
+    methods = {"torch": iterative_3d_warp_torch, "cuda": iterative_3d_warp_cuda}
+    grads, losses = [], []
+    seed = torch.randint(0, 1000, (1,)).item()
+    print(f"Seed: {seed}")
+    for name, warp_fn in methods.items():
+        torch.manual_seed(seed)
+        # n = 1
+        n = 100
+        # b, d, h, w = 1, 4, 6, 6
+        b, d, h, w = 1, 3, 5, 5
+        # events = torch.tensor([[[1.0, 1.0, 1.0, 1.0]]], device="cuda")  # (b, n, 4): x, y, z, val
+        events = torch.rand((b, n, 4), device="cuda") * torch.tensor([w - 1, h - 1, d - 1, 1.0], device="cuda")
+        # flows = torch.zeros((b, d, h, w, 2), device="cuda")  # (b, d, h, w, 2): u, v flow from z to z+1
+        # flows[0, 1, 1, 1, 0] = 1
+        # flows[0, 2, 1, 2, 0] = 1
+        # flows[0, 3, 1, 3, 0] = 1
+        flow_mag = torch.tensor([0.5, 0.0], device="cuda")
+        flows = torch.rand((b, 1, h, w, 2), device="cuda").repeat(1, d, 1, 1, 1) * flow_mag
+        flows.requires_grad = True
+        visualize_tensor(flows[..., 0].detach(), title=f"x flow field {name}", folder="figures/test_warp_events")
 
-    warped_events = iterative_3d_warp_torch(events, flows, mode="bilinear")
-    print(f"Original events with shape {tuple(events.shape)}:\n{events}\n")
-    print(f"Warped events (cuda) with shape {tuple(warped_events.shape)}:\n{warped_events}\n")
+        warped_events = warp_fn(events, flows)  # no mode trilinear yet for cuda
+        print(f"Original events with shape {tuple(events.shape)}:\n{events}\n")
+        print(f"Warped events ({name}) with shape {tuple(warped_events.shape)}:\n{warped_events}\n")
 
-    splatted = trilinear_splat_torch(warped_events.view(b, -1, 5), (d + 1, h, w))
-    visualize_tensor(splatted.detach(), title="splatted image", folder="figures/test_warp_grad")
+        splatted = trilinear_splat_torch(warped_events.view(b, -1, 5), (d + 1, h, w))
+        visualize_tensor(splatted.detach(), title=f"splatted image {name}", folder="figures/test_warp_events")
 
-    loss = splatted.diff(dim=1).abs()
-    visualize_tensor(loss.detach(), title="loss image", folder="figures/test_warp_grad")
+        loss = splatted.diff(dim=1).abs()
+        visualize_tensor(loss.detach(), title=f"loss image {name}", folder="figures/test_warp_events")
 
-    loss_val = loss.sum()
-    print(f"Loss val: {loss_val.item()}")
-    loss_val.backward()
+        loss_val = loss.sum()
+        print(f"Loss val ({name}): {loss_val.item()}")
+        loss_val.backward()
+        losses.append(loss_val.clone())
 
-    visualize_tensor(flows.grad[..., 0], title="grad x flow field", folder="figures/test_warp_grad")
-    visualize_tensor(flows.grad[..., 1], title="grad y flow field", folder="figures/test_warp_grad")
+        visualize_tensor(flows.grad[..., 0], title=f"grad x flow field {name}", folder="figures/test_warp_events")
+        visualize_tensor(flows.grad[..., 1], title=f"grad y flow field {name}", folder="figures/test_warp_events")
+        grads.append(flows.grad.clone())
+    
+    print(f"Losses all equal: {torch.allclose(*losses)}, largest diff: {torch.max(torch.abs(losses[0] - losses[1]))}")
+    print(f"Grads all equal: {torch.allclose(*grads)}, largest diff: {torch.max(torch.abs(grads[0] - grads[1]))}")
