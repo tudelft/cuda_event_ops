@@ -378,7 +378,7 @@ std::vector<torch::Tensor> iterative_3d_warp_backward_cuda(
     auto grad_points = torch::zeros_like(points);
     auto grad_flow_fields = torch::zeros_like(flow_fields);
 
-    int threads = 32;
+    int threads = 1024;
     int blocks = (batch_size * num_points + threads - 1) / threads;
 
     iterative_3d_warp_backward_kernel<<<blocks, threads>>>(

@@ -2,7 +2,7 @@ from math import floor, ceil
 
 import torch
 
-from iterative_3d_warp import iterative_3d_warp as iterative_3d_warp_cuda
+from iterative_3d_warp import iterative_3d_warp_cuda
 from test_3d_warp import visualize_tensor
 
 
@@ -208,7 +208,7 @@ NOTE:
 if __name__ == "__main__":
     methods = {"torch": iterative_3d_warp_torch, "cuda": iterative_3d_warp_cuda}
     grads, losses = [], []
-    seed = torch.randint(0, 1000, (1,)).item()
+    seed = torch.randint(0, 1000, (1,)).item()  # NOTE: 460 still gives 9.5e-7 grad differences
     print(f"Seed: {seed}")
     for name, warp_fn in methods.items():
         torch.manual_seed(seed)

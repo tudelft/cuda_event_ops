@@ -3,7 +3,7 @@ import torch
 from iterative_3d_warp_cuda import _C
 
 
-class Iterative3DWarp(torch.autograd.Function):
+class Iterative3DWarpCuda(torch.autograd.Function):
 
     @staticmethod
     def forward(ctx, points, flow_fields):
@@ -18,5 +18,5 @@ class Iterative3DWarp(torch.autograd.Function):
         return grad_points, grad_flow_fields
 
 
-def iterative_3d_warp(points, flow_fields):
-    return Iterative3DWarp.apply(points, flow_fields)
+def iterative_3d_warp_cuda(points, flow_fields):
+    return Iterative3DWarpCuda.apply(points, flow_fields)
