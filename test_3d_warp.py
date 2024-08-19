@@ -135,7 +135,9 @@ class Single3dWarpCustom(torch.autograd.Function):
         )
         
         dflow_dpoint = torch.stack([dflow_dx, dflow_dy, dflow_dz], dim=-1)
-        grad_point = grad_output.view(-1, 1) * (torch.eye(3, device=grad_output.device) + dflow_dpoint)
+        dwarped_point_dpoint = torch.eye(3, device=grad_output.device) + dflow_dpoint
+        grad_point = grad_output.view(-1, 1) * dwarped_point_dpoint
+        grad_point = grad_point.sum(0)  # sum over rows to get aggregate output grad wrt single input dim
 
         # gradients wrt flow field
         grad_flow_field = torch.zeros_like(flow_field)
@@ -176,6 +178,90 @@ def iterative_3d_warp(points, flow_field, warps, custom=False):
     warped_points = torch.stack(warped_points).view(b, n * warps, 3)
 
     return warped_points
+
+
+class Iterative3dWarpCustom(torch.autograd.Function):
+
+    @staticmethod
+    def forward(ctx, points, flow_field, warps):
+        warped_points = iterative_3d_warp(points, flow_field, warps, custom=True)
+        ctx.save_for_backward(warped_points, points, flow_field)
+        ctx.warps = warps
+        return warped_points
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        warped_points, points, flow_field = ctx.saved_tensors
+        warps = ctx.warps
+        b, n, _ = points.shape
+        grad_flow_field = torch.zeros_like(flow_field)
+
+        for bi in range(b):
+            for ni in range(n):
+                grad_warped_point, grad_point = 0, 0
+                for wi in reversed(range(warps)):
+                    grad_warped_point += grad_output[bi, ni * warps + wi]
+
+                    # get point and corners before warp
+                    x, y, z = warped_points[bi, ni * warps + wi - 1] if wi > 0 else points[bi, ni]
+                    x0, y0, z0 = floor(x), floor(y), floor(z)
+                    x1, y1, z1 = x0 + 1, y0 + 1, z0 + 1
+                    dx, dy, dz = x - x0, y - y0, z - z0
+
+                    # gradients wrt flow field
+                    # here we distribute the gradient from the flow field to the corresponding weights
+                    grad_flow_field[bi, z0, y0, x0] += grad_warped_point * (1 - dx) * (1 - dy) * (1 - dz)
+                    grad_flow_field[bi, z0, y0, x1] += grad_warped_point * dx * (1 - dy) * (1 - dz)
+                    grad_flow_field[bi, z0, y1, x0] += grad_warped_point * (1 - dx) * dy * (1 - dz)
+                    grad_flow_field[bi, z0, y1, x1] += grad_warped_point * dx * dy * (1 - dz)
+
+                    grad_flow_field[bi, z1, y0, x0] += grad_warped_point * (1 - dx) * (1 - dy) * dz
+                    grad_flow_field[bi, z1, y0, x1] += grad_warped_point * dx * (1 - dy) * dz
+                    grad_flow_field[bi, z1, y1, x0] += grad_warped_point * (1 - dx) * dy * dz
+                    grad_flow_field[bi, z1, y1, x1] += grad_warped_point * dx * dy * dz
+
+                    # gradients wrt point
+                    f000 = flow_field[bi, z0, y0, x0]
+                    f001 = flow_field[bi, z0, y0, x1]
+                    f010 = flow_field[bi, z0, y1, x0]
+                    f011 = flow_field[bi, z0, y1, x1]
+
+                    f100 = flow_field[bi, z1, y0, x0]
+                    f101 = flow_field[bi, z1, y0, x1]
+                    f110 = flow_field[bi, z1, y1, x0]
+                    f111 = flow_field[bi, z1, y1, x1]
+
+                    dflow_dx = (
+                        (f001 - f000) * (1 - dy) * (1 - dz) +
+                        (f011 - f010) * dy * (1 - dz) +
+                        (f101 - f100) * (1 - dy) * dz +
+                        (f111 - f110) * dy * dz
+                    )
+
+                    dflow_dy = (
+                        (f010 - f000) * (1 - dx) * (1 - dz) +
+                        (f011 - f001) * dx * (1 - dz) +
+                        (f110 - f100) * (1 - dx) * dz +
+                        (f111 - f101) * dx * dz
+                    )
+                    
+                    dflow_dz = (
+                        (f100 - f000) * (1 - dx) * (1 - dy) +
+                        (f101 - f001) * dx * (1 - dy) +
+                        (f110 - f010) * (1 - dx) * dy +
+                        (f111 - f011) * dx * dy
+                    )
+                    
+                    dflow_dpoint = torch.stack([dflow_dx, dflow_dy, dflow_dz], dim=-1)
+                    dwarped_point_dpoint = torch.eye(3, device=grad_output.device) + dflow_dpoint
+                    grad_point = (grad_warped_point.view(-1, 1) * dwarped_point_dpoint).sum(0)
+                    grad_warped_point = grad_point.clone()
+
+        return None, grad_flow_field, None
+
+
+def iterative_3d_warp_custom(points, flow_field, warps):
+    return Iterative3dWarpCustom.apply(points, flow_field, warps)
 
 
 def trilinear_splat(points, grid_resolution):
@@ -244,7 +330,8 @@ if __name__ == "__main__":
     visualize_tensor(flow_field[..., 0].detach(), title="x flow field")
 
     warped_points = iterative_3d_warp(points, flow_field, warps)
-    warped_points_custom = iterative_3d_warp(points, flow_field_custom, warps, custom=True)
+    # warped_points = iterative_3d_warp(points, flow_field, warps, custom=True)
+    warped_points_custom = iterative_3d_warp_custom(points, flow_field_custom, warps)
     print(f"Original points with shape {tuple(points.shape)}:\n{points}\n")
     print(f"Warped points with shape {tuple(warped_points.shape)}:\n{warped_points}\n")
     print(f"Warped points (custom) with shape {tuple(warped_points_custom.shape)}:\n{warped_points_custom}\n")
