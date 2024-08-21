@@ -1,6 +1,6 @@
 import torch
 
-from iterative_3d_warp_cuda import _C
+from cuda_3d_ops_cuda import _C
 
 
 class Iterative3DWarpCuda(torch.autograd.Function):

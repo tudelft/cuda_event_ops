@@ -2,7 +2,7 @@ from math import floor, ceil
 
 import torch
 
-from iterative_3d_warp import iterative_3d_warp_cuda
+from cuda_3d_ops import iterative_3d_warp_cuda
 from test_3d_warp import visualize_tensor
 
 
