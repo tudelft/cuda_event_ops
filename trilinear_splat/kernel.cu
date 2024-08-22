@@ -136,6 +136,9 @@ torch::Tensor trilinear_splat_cuda(
     int batch_size = points.size(0);
     int num_points = points.size(1);
 
+    // only if at least one point
+    if (num_points == 0) return grid;
+
     // one thread per point
     // TODO: less is more optimal?
     const int threads = 1024;
@@ -159,6 +162,9 @@ torch::Tensor trilinear_splat_backward_cuda(
     int num_points = points.size(1);
 
     auto grad_points = torch::zeros_like(points);
+
+    // only if at least one point
+    if (num_points == 0) return grad_points;
     
     // one thread per point
     // TODO: less is more optimal?
