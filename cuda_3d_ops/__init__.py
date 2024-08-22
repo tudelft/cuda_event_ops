@@ -15,7 +15,7 @@ class Iterative3DWarpCuda(torch.autograd.Function):
     @staticmethod
     def backward(ctx, grad_output):
         points, flow_fields, warped_points = ctx.saved_tensors
-        grad_points, grad_flow_fields = iterative_3d_warp_backward(grad_output, points, flow_fields, warped_points)
+        grad_points, grad_flow_fields = iterative_3d_warp_backward(grad_output.contiguous(), points, flow_fields, warped_points)
         return grad_points, grad_flow_fields
 
 
@@ -36,7 +36,7 @@ class TrilinearSplatCuda(torch.autograd.Function):
         def backward(ctx, grad_output):
             (points,) = ctx.saved_tensors
             grid_resolution = ctx.grid_resolution
-            grad_points = trilinear_splat_backward(grad_output, points, *grid_resolution)
+            grad_points = trilinear_splat_backward(grad_output.contiguous(), points, *grid_resolution)
             return grad_points, None
 
 
