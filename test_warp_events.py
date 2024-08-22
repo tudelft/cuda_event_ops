@@ -11,7 +11,7 @@ def iterative_3d_warp_torch(events, flows, mode="bilinear"):
     Iteratively warps events in 3D using flow fields and bilinear/trilinear interpolation.
 
     Args:
-        events (torch.Tensor): A tensor of shape (b, n, 4), where each event has (x, y, z, val).
+        events (torch.Tensor): A tensor of shape (b, n, 5), where each event has (x, y, z, zi, val).
         flows (torch.Tensor): A tensor of shape (b, d, h, w, 2), where each flow has (u, v).
     
     Returns:
@@ -56,16 +56,16 @@ def iterative_3d_warp_torch(events, flows, mode="bilinear"):
 
         return flow
     
-    def bilinear_interpolation(x, y, z0, flows):
+    def bilinear_interpolation(x, y, zi, flows):
         # determine voxel indices
         x0, y0 = floor(x), floor(y)
         x1, y1 = x0 + 1, y0 + 1
 
         # get corner flows
-        f00 = flows[z0, y0, x0]
-        f01 = flows[z0, y0, x1]
-        f10 = flows[z0, y1, x0]
-        f11 = flows[z0, y1, x1]
+        f00 = flows[zi, y0, x0]
+        f01 = flows[zi, y0, x1]
+        f10 = flows[zi, y1, x0]
+        f11 = flows[zi, y1, x1]
 
         # compute weights
         w00 = (y1 - y) * (x1 - x)
@@ -80,7 +80,7 @@ def iterative_3d_warp_torch(events, flows, mode="bilinear"):
     
     for bi in range(b):
         for ni in range(n):
-            x, y, z, val = events[bi, ni]
+            x, y, z, zi, val = events[bi, ni]
             z_orig = z.clone()
             is_out_of_bounds = out_of_bounds(x, y)
             if is_out_of_bounds:
@@ -88,14 +88,12 @@ def iterative_3d_warp_torch(events, flows, mode="bilinear"):
 
             # warp forward: increasing z values
             # start with next integer z value
-            z_ceil = ceil(z) if ceil(z) != int(z) else int(z) + 1
-            for z1 in range(z_ceil, d + 1):
-                z0 = floor(z)
-                dz = z1 - z
+            for z_next in range(int(zi) + 1, d + 1):
+                dz = z_next - z
 
                 # interpolation to get flow at (x, y)
                 if mode == "bilinear":
-                    u, v = bilinear_interpolation(x, y, z0, flows[bi])
+                    u, v = bilinear_interpolation(x, y, z_next - 1, flows[bi])
                 else:
                     u, v = trilinear_interpolation(x, y, z, flows[bi])
 
@@ -106,7 +104,7 @@ def iterative_3d_warp_torch(events, flows, mode="bilinear"):
                 z = z + dz
 
                 # save warped event
-                warped_events[bi, ni, z1] = torch.stack([x, y, z, z_orig, val])
+                warped_events[bi, ni, z_next] = torch.stack([x, y, z, z_orig, val])
             
                 # check if out of bounds
                 if out_of_bounds(x, y):
@@ -116,15 +114,17 @@ def iterative_3d_warp_torch(events, flows, mode="bilinear"):
             # only do if not yet out of bounds
             if not is_out_of_bounds:
                 # reload original coordinates
-                x, y, z, val = events[bi, ni]
+                x, y, z, zi, val = events[bi, ni]
 
                 # warp backward: decreasing z values
-                z_floor = floor(z)  # if integer then it belongs here
-                for z0 in range(z_floor, -1, -1):
-                    dz = z - z0
+                for z_next in range(int(zi), -1, -1):
+                    dz = z - z_next
 
                     # bilinear interpolation to get flow at (x, y)
-                    u, v = bilinear_interpolation(x, y, z0, flows[bi])
+                    if mode == "bilinear":
+                        u, v = bilinear_interpolation(x, y, z_next, flows[bi])
+                    else:
+                        u, v = trilinear_interpolation(x, y, z, flows[bi])
 
                     # update (x, y, z) using flow
                     # scale flow by dz to account for non-integer z values
@@ -133,7 +133,7 @@ def iterative_3d_warp_torch(events, flows, mode="bilinear"):
                     z = z - dz
 
                     # save warped event
-                    warped_events[bi, ni, z0] = torch.stack([x, y, z, z_orig, val])
+                    warped_events[bi, ni, z_next] = torch.stack([x, y, z, z_orig, val])
             
                     # check if out of bounds
                     if out_of_bounds(x, y):
@@ -208,7 +208,7 @@ NOTE:
 if __name__ == "__main__":
     methods = {"torch": [iterative_3d_warp_torch, trilinear_splat_torch], "cuda": [iterative_3d_warp_cuda, trilinear_splat_cuda]}
     grads, losses = [], []
-    seed = torch.randint(0, 1000, (1,)).item()  # NOTE: 460 still gives 9.5e-7 grad differences
+    seed = torch.randint(0, 1000, (1,)).item()
     print(f"Seed: {seed}")
     for name, functions in methods.items():
         torch.manual_seed(seed)
@@ -216,8 +216,9 @@ if __name__ == "__main__":
         n = 100
         # b, d, h, w = 1, 4, 6, 6
         b, d, h, w = 1, 3, 5, 5
-        # events = torch.tensor([[[1.0, 1.0, 1.0, 1.0]]], device="cuda")  # (b, n, 4): x, y, z, val
-        events = torch.rand((b, n, 4), device="cuda") * torch.tensor([w - 1, h - 1, d - 1, 1.0], device="cuda")
+        # events = torch.tensor([[[1.0, 1.0, 3.0, 2, 1.0]]], device="cuda")  # (b, n, 5): x, y, z, zi, val
+        events = torch.rand((b, n, 5), device="cuda") * torch.tensor([w - 1, h - 1, d, d - 1, 1.0], device="cuda")
+        events[..., 3] = events[..., 2].floor()
         # flows = torch.zeros((b, d, h, w, 2), device="cuda")  # (b, d, h, w, 2): u, v flow from z to z+1
         # flows[0, 1, 1, 1, 0] = 1
         # flows[0, 2, 1, 2, 0] = 1
