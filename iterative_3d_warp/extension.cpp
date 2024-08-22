@@ -48,6 +48,6 @@ std::vector<torch::Tensor> iterative_3d_warp_backward(
 
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
-  m.def("iterative_3d_warp_forward", &iterative_3d_warp_forward, "Iterative 3D warp (CUDA)");
-  m.def("iterative_3d_warp_backward", &iterative_3d_warp_backward, "Iterative 3D warp backward (CUDA)");
+    m.def("iterative_3d_warp_forward", &iterative_3d_warp_forward, "Iterative 3D warp (CUDA)");
+    m.def("iterative_3d_warp_backward", &iterative_3d_warp_backward, "Iterative 3D warp backward (CUDA)");
 }

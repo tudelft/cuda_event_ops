@@ -2,7 +2,7 @@ from math import floor, ceil
 
 import torch
 
-from cuda_3d_ops import iterative_3d_warp_cuda
+from cuda_3d_ops import iterative_3d_warp_cuda, trilinear_splat_cuda
 from test_3d_warp import visualize_tensor
 
 
@@ -206,11 +206,11 @@ NOTE:
 
 
 if __name__ == "__main__":
-    methods = {"torch": iterative_3d_warp_torch, "cuda": iterative_3d_warp_cuda}
+    methods = {"torch": [iterative_3d_warp_torch, trilinear_splat_torch], "cuda": [iterative_3d_warp_cuda, trilinear_splat_cuda]}
     grads, losses = [], []
     seed = torch.randint(0, 1000, (1,)).item()  # NOTE: 460 still gives 9.5e-7 grad differences
     print(f"Seed: {seed}")
-    for name, warp_fn in methods.items():
+    for name, functions in methods.items():
         torch.manual_seed(seed)
         # n = 1
         n = 100
@@ -227,11 +227,13 @@ if __name__ == "__main__":
         flows.requires_grad = True
         visualize_tensor(flows[..., 0].detach(), title=f"x flow field {name}", folder="figures/test_warp_events")
 
+        warp_fn, splat_fn = functions
+
         warped_events = warp_fn(events, flows)  # no mode trilinear yet for cuda
         print(f"Original events with shape {tuple(events.shape)}:\n{events}\n")
         print(f"Warped events ({name}) with shape {tuple(warped_events.shape)}:\n{warped_events}\n")
 
-        splatted = trilinear_splat_torch(warped_events.view(b, -1, 5), (d + 1, h, w))
+        splatted = splat_fn(warped_events.view(b, -1, 5), (d + 1, h, w))
         visualize_tensor(splatted.detach(), title=f"splatted image {name}", folder="figures/test_warp_events")
 
         loss = splatted.diff(dim=1).abs()
