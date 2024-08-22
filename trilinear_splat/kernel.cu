@@ -137,6 +137,7 @@ torch::Tensor trilinear_splat_cuda(
     int num_points = points.size(1);
 
     // only if at least one point
+    printf("num_points: %d\n", num_points);
     if (num_points == 0) return grid;
 
     // one thread per point
@@ -164,6 +165,7 @@ torch::Tensor trilinear_splat_backward_cuda(
     auto grad_points = torch::zeros_like(points);
 
     // only if at least one point
+    printf("num_points: %d\n", num_points);
     if (num_points == 0) return grad_points;
     
     // one thread per point
