@@ -23,7 +23,7 @@ __global__ void trilinear_splat_kernel(
         float x = points[bi][pi][0];
         float y = points[bi][pi][1];
         float z = points[bi][pi][2];
-        float val = points[bi][pi][4];
+        float val = points[bi][pi][3];
         
         // get corners and weights
         int x0 = floor(x), y0 = floor(y), z0 = floor(z);
@@ -80,7 +80,7 @@ __global__ void trilinear_splat_backward_kernel(
         float x = points[bi][pi][0];
         float y = points[bi][pi][1];
         float z = points[bi][pi][2];
-        float val = points[bi][pi][4];
+        float val = points[bi][pi][3];
         
         // get corners and weights
         int x0 = floor(x), y0 = floor(y), z0 = floor(z);

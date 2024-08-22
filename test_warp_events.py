@@ -164,7 +164,7 @@ def trilinear_splat_torch(events, grid_resolution):
 
     for bi in range(b):
         for ni in range(n):
-            x, y, z, _, val = events[bi, ni]  # ignore z_orig
+            x, y, z, val = events[bi, ni]
 
             # determine voxel indices
             x0, y0, z0 = floor(x), floor(y), floor(z)
@@ -234,7 +234,8 @@ if __name__ == "__main__":
         print(f"Original events with shape {tuple(events.shape)}:\n{events}\n")
         print(f"Warped events ({name}) with shape {tuple(warped_events.shape)}:\n{warped_events}\n")
 
-        splatted = splat_fn(warped_events.view(b, -1, 5), (d + 1, h, w))
+        warped_events = warped_events[..., [0, 1, 2, 4]].view(b, -1, 4)  # remove z_orig
+        splatted = splat_fn(warped_events, (d + 1, h, w))
         visualize_tensor(splatted.detach(), title=f"splatted image {name}", folder="figures/test_warp_events")
 
         loss = splatted.diff(dim=1).abs()
