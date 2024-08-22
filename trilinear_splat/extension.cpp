@@ -27,6 +27,8 @@ torch::Tensor trilinear_splat_forward(
     CHECK_INPUT(points);
     auto grid = torch::zeros({points.size(0), grid_d, grid_h, grid_w}, points.options());
 
+    if (points.size(0) == 0) return grid;
+
     return trilinear_splat_cuda(points, grid, grid_d, grid_h, grid_w);
 }
 
