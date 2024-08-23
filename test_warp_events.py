@@ -13,7 +13,7 @@ def iterative_3d_warp_torch(events, flows, mode="bilinear"):
     Args:
         events (torch.Tensor): A tensor of shape (b, n, 5), where each event has (x, y, z, zi, val).
         flows (torch.Tensor): A tensor of shape (b, d, h, w, 2), where each flow has (u, v).
-    
+
     Returns:
         torch.Tensor: A tensor of shape (b, n, d + 1, 5), where each event has (x, y, z, z_orig, val).
     """
@@ -23,7 +23,7 @@ def iterative_3d_warp_torch(events, flows, mode="bilinear"):
 
     def out_of_bounds(x, y):
         return x < 0 or x >= w - 1 or y < 0 or y >= h - 1
-    
+
     def trilinear_interpolation(x, y, z, flows):
         # determine voxel indices
         x0, y0, z0 = floor(x), floor(y), floor(z)
@@ -55,7 +55,7 @@ def iterative_3d_warp_torch(events, flows, mode="bilinear"):
             flow += flows[z1, y1, x1] * wx1 * wy1 * wz1
 
         return flow
-    
+
     def bilinear_interpolation(x, y, zi, flows):
         # determine voxel indices
         x0, y0 = floor(x), floor(y)
@@ -77,7 +77,7 @@ def iterative_3d_warp_torch(events, flows, mode="bilinear"):
         flow = f00 * w00 + f01 * w01 + f10 * w10 + f11 * w11
 
         return flow
-    
+
     for bi in range(b):
         for ni in range(n):
             x, y, z, zi, val = events[bi, ni]
@@ -105,12 +105,12 @@ def iterative_3d_warp_torch(events, flows, mode="bilinear"):
 
                 # save warped event
                 warped_events[bi, ni, z_next] = torch.stack([x, y, z, z_orig, val])
-            
+
                 # check if out of bounds
                 if out_of_bounds(x, y):
                     is_out_of_bounds = True
                     break
-                    
+
             # only do if not yet out of bounds
             if not is_out_of_bounds:
                 # reload original coordinates
@@ -134,16 +134,16 @@ def iterative_3d_warp_torch(events, flows, mode="bilinear"):
 
                     # save warped event
                     warped_events[bi, ni, z_next] = torch.stack([x, y, z, z_orig, val])
-            
+
                     # check if out of bounds
                     if out_of_bounds(x, y):
                         is_out_of_bounds = True
                         break
-                        
+
             # set all values to zero if out of bounds at some point
             if is_out_of_bounds:
                 warped_events[bi, ni, :, -1] = 0
-    
+
     return warped_events
 
 
@@ -206,7 +206,10 @@ NOTE:
 
 
 if __name__ == "__main__":
-    methods = {"torch": [iterative_3d_warp_torch, trilinear_splat_torch], "cuda": [iterative_3d_warp_cuda, trilinear_splat_cuda]}
+    methods = {
+        "torch": [iterative_3d_warp_torch, trilinear_splat_torch],
+        "cuda": [iterative_3d_warp_cuda, trilinear_splat_cuda],
+    }
     grads, losses = [], []
     seed = torch.randint(0, 1000, (1,)).item()
     print(f"Seed: {seed}")
@@ -249,6 +252,6 @@ if __name__ == "__main__":
         visualize_tensor(flows.grad[..., 0], title=f"grad x flow field {name}", folder="figures/test_warp_events")
         visualize_tensor(flows.grad[..., 1], title=f"grad y flow field {name}", folder="figures/test_warp_events")
         grads.append(flows.grad.clone())
-    
+
     print(f"Losses all equal: {torch.allclose(*losses)}, largest diff: {torch.max(torch.abs(losses[0] - losses[1]))}")
     print(f"Grads all equal: {torch.allclose(*grads)}, largest diff: {torch.max(torch.abs(grads[0] - grads[1]))}")

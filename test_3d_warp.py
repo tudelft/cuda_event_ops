@@ -25,13 +25,13 @@ def visualize_tensor(tensor, title="", figsize=(6, 2), folder="figures/test_3d_w
     for i in range(b * d):
         grid[i].imshow(tensor[i].cpu().numpy())
         grid[i].axis("off")
-    
+
     # add pixel values as text
     for i in range(b * d):
         for j in range(h):
             for k in range(w):
                 grid[i].text(k, j, f"{tensor[i, j, k]:.3f}", color="red", fontsize=6, ha="center", va="center")
-    
+
     plt.suptitle(title)
     plt.tight_layout()
     plt.savefig(folder / f"{title.replace(' ', '_')}.png", dpi=300)
@@ -68,17 +68,17 @@ def single_3d_warp(point, flow_field):
 
         # compute flow
         flow = (
-            w000 * f000 +
-            w001 * f001 +
-            w010 * f010 +
-            w011 * f011 +
-            w100 * f100 +
-            w101 * f101 +
-            w110 * f110 +
-            w111 * f111
+            w000 * f000
+            + w001 * f001
+            + w010 * f010
+            + w011 * f011
+            + w100 * f100
+            + w101 * f101
+            + w110 * f110
+            + w111 * f111
         )
         return flow
-    
+
     x, y, z = point
     flow = trilinear_interpolation(x, y, z, flow_field)
     warped_point = point + flow
@@ -114,26 +114,26 @@ class Single3dWarpCustom(torch.autograd.Function):
         f111 = flow_field[z1, y1, x1]
 
         dflow_dx = (
-            (f001 - f000) * (1 - dy) * (1 - dz) +
-            (f011 - f010) * dy * (1 - dz) +
-            (f101 - f100) * (1 - dy) * dz +
-            (f111 - f110) * dy * dz
+            (f001 - f000) * (1 - dy) * (1 - dz)
+            + (f011 - f010) * dy * (1 - dz)
+            + (f101 - f100) * (1 - dy) * dz
+            + (f111 - f110) * dy * dz
         )
 
         dflow_dy = (
-            (f010 - f000) * (1 - dx) * (1 - dz) +
-            (f011 - f001) * dx * (1 - dz) +
-            (f110 - f100) * (1 - dx) * dz +
-            (f111 - f101) * dx * dz
+            (f010 - f000) * (1 - dx) * (1 - dz)
+            + (f011 - f001) * dx * (1 - dz)
+            + (f110 - f100) * (1 - dx) * dz
+            + (f111 - f101) * dx * dz
         )
-        
+
         dflow_dz = (
-            (f100 - f000) * (1 - dx) * (1 - dy) +
-            (f101 - f001) * dx * (1 - dy) +
-            (f110 - f010) * (1 - dx) * dy +
-            (f111 - f011) * dx * dy
+            (f100 - f000) * (1 - dx) * (1 - dy)
+            + (f101 - f001) * dx * (1 - dy)
+            + (f110 - f010) * (1 - dx) * dy
+            + (f111 - f011) * dx * dy
         )
-        
+
         dflow_dpoint = torch.stack([dflow_dx, dflow_dy, dflow_dz], dim=-1)
         dwarped_point_dpoint = torch.eye(3, device=grad_output.device) + dflow_dpoint
         grad_point = grad_output.view(-1, 1) * dwarped_point_dpoint
@@ -141,7 +141,7 @@ class Single3dWarpCustom(torch.autograd.Function):
 
         # gradients wrt flow field
         grad_flow_field = torch.zeros_like(flow_field)
-        
+
         # here we distribute the gradient from the flow field to the corresponding weights
         grad_flow_field[z0, y0, x0] += grad_output * (1 - dx) * (1 - dy) * (1 - dz)
         grad_flow_field[z0, y0, x1] += grad_output * dx * (1 - dy) * (1 - dz)
@@ -174,7 +174,7 @@ def iterative_3d_warp(points, flow_field, warps, custom=False):
                     warped_point = single_3d_warp_custom(point, flow_field[bi])
                 warped_points.append(warped_point)
                 point = warped_point
-    
+
     warped_points = torch.stack(warped_points).view(b, n * warps, 3)
 
     return warped_points
@@ -232,26 +232,26 @@ class Iterative3dWarpCustom(torch.autograd.Function):
                     f111 = flow_field[bi, z1, y1, x1]
 
                     dflow_dx = (
-                        (f001 - f000) * (1 - dy) * (1 - dz) +
-                        (f011 - f010) * dy * (1 - dz) +
-                        (f101 - f100) * (1 - dy) * dz +
-                        (f111 - f110) * dy * dz
+                        (f001 - f000) * (1 - dy) * (1 - dz)
+                        + (f011 - f010) * dy * (1 - dz)
+                        + (f101 - f100) * (1 - dy) * dz
+                        + (f111 - f110) * dy * dz
                     )
 
                     dflow_dy = (
-                        (f010 - f000) * (1 - dx) * (1 - dz) +
-                        (f011 - f001) * dx * (1 - dz) +
-                        (f110 - f100) * (1 - dx) * dz +
-                        (f111 - f101) * dx * dz
+                        (f010 - f000) * (1 - dx) * (1 - dz)
+                        + (f011 - f001) * dx * (1 - dz)
+                        + (f110 - f100) * (1 - dx) * dz
+                        + (f111 - f101) * dx * dz
                     )
-                    
+
                     dflow_dz = (
-                        (f100 - f000) * (1 - dx) * (1 - dy) +
-                        (f101 - f001) * dx * (1 - dy) +
-                        (f110 - f010) * (1 - dx) * dy +
-                        (f111 - f011) * dx * dy
+                        (f100 - f000) * (1 - dx) * (1 - dy)
+                        + (f101 - f001) * dx * (1 - dy)
+                        + (f110 - f010) * (1 - dx) * dy
+                        + (f111 - f011) * dx * dy
                     )
-                    
+
                     dflow_dpoint = torch.stack([dflow_dx, dflow_dy, dflow_dz], dim=-1)
                     dwarped_point_dpoint = torch.eye(3, device=grad_output.device) + dflow_dpoint
                     grad_point = (grad_warped_point.view(-1, 1) * dwarped_point_dpoint).sum(0)
