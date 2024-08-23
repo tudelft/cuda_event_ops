@@ -15,7 +15,7 @@ pip install git+ssh://git@github.com/Huizerd/cuda_3d_ops
 
 ## To do
 
-- [ ] Check for zero val in splatting
+- [x] Check for zero val in splatting
 - [ ] Check best approach to threads: one per point? Or independent of points?
 - [ ] Use accessors to make CUDA code more readable
 - [ ] Beautify code generally

@@ -24,6 +24,9 @@ __global__ void trilinear_splat_kernel(
         float y = points[bi][pi][1];
         float z = points[bi][pi][2];
         float val = points[bi][pi][3];
+
+        // skip if value is zero
+        if (val == 0) continue;
         
         // get corners and weights
         int x0 = floor(x), y0 = floor(y), z0 = floor(z);
@@ -81,7 +84,10 @@ __global__ void trilinear_splat_backward_kernel(
         float y = points[bi][pi][1];
         float z = points[bi][pi][2];
         float val = points[bi][pi][3];
-        
+
+        // skip if value is zero
+        if (val == 0) continue;
+
         // get corners and weights
         int x0 = floor(x), y0 = floor(y), z0 = floor(z);
         int x1 = x0 + 1, y1 = y0 + 1, z1 = z0 + 1;
