@@ -36,6 +36,14 @@ __global__ void trilinear_splat_kernel(
         float wx0 = 1 - dx, wy0 = 1 - dy, wz0 = 1 - dz;
         float wx1 = dx, wy1 = dy, wz1 = dz;
 
+        // zero weights give incorrect gradient perception for integer coordinates
+        wx0 = fmax(wx0, 1e-8);
+        wy0 = fmax(wy0, 1e-8);
+        wz0 = fmax(wz0, 1e-8);
+        wx1 = fmax(wx1, 1e-8);
+        wy1 = fmax(wy1, 1e-8);
+        wz1 = fmax(wz1, 1e-8);
+
         // add value if corner inside grid
         if (x0 >= 0 && y0 >= 0 && z0 >= 0 && x0 < grid_w && y0 < grid_h && z0 < grid_d) {
             atomicAdd(&grid[bi][z0][y0][x0], val * wx0 * wy0 * wz0);
