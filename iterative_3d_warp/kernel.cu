@@ -45,7 +45,7 @@ __global__ void iterative_3d_warp_kernel(
     const float* __restrict__ points, 
     const float* __restrict__ flow_fields, 
     float* __restrict__ warped_points,
-    int batch_size, int num_points, int num_flow_fields, int num_z, int height, int width) {
+    int batch_size, int num_points, int num_flow_fields, int num_z, int max_num_warps, int height, int width) {
     
     // int idx = blockIdx.x * blockDim.x + threadIdx.x;
     // if (idx >= batch_size * num_points) return;
@@ -66,6 +66,9 @@ __global__ void iterative_3d_warp_kernel(
         float val = points[batch_idx * num_points * 5 + point_idx * 5 + 4];
         float z_orig = z;
 
+        // skip if value is zero
+        if (val == 0) return;
+
         // if out of bounds to start with, return
         bool is_out_of_bounds = check_out_of_bounds(x, y, 0, width - 1, 0, height - 1);
         if (is_out_of_bounds) return;
@@ -74,6 +77,9 @@ __global__ void iterative_3d_warp_kernel(
         // start with next integer z value
         for (int z_next = zi + 1; z_next < num_z; z_next++) {
             float dz = z_next - z;
+
+            // stop if max number of warps reached
+            if (z_next - zi > max_num_warps) break;
 
             // bilinear interpolation to get flow at (x, y)
             const float* flow_field = flow_fields + batch_idx * num_flow_fields * height * width * 2 + (z_next - 1) * height * width * 2;
@@ -113,6 +119,9 @@ __global__ void iterative_3d_warp_kernel(
             // start with previous integer z value
             for (int z_next = zi; z_next > -1; z_next--) {
                 float dz = z - z_next;
+
+                // stop if max number of warps reached
+                if (zi - z_next > max_num_warps - 1) break;
 
                 // bilinear interpolation to get flow at (x, y)
                 const float* flow_field = flow_fields + batch_idx * num_flow_fields * height * width * 2 + z_next * height * width * 2;
@@ -172,7 +181,7 @@ __global__ void iterative_3d_warp_backward_kernel(
         int batch_idx = idx / num_points;
         int point_idx = idx % num_points;
 
-        // check if point was out of bounds: all values are zero
+        // check if point was out of bounds (or zero padding): all values are zero
         if (warped_points[batch_idx * num_points * num_z * 5 + point_idx * num_z * 5 + 4] == 0) return;
 
         // load starting z
@@ -336,7 +345,8 @@ __global__ void iterative_3d_warp_backward_kernel(
 
 torch::Tensor iterative_3d_warp_cuda(
     torch::Tensor points,
-    torch::Tensor flow_fields) {
+    torch::Tensor flow_fields,
+    int max_num_warps) {
 
     int batch_size = points.size(0);
     int num_points = points.size(1);
@@ -359,7 +369,7 @@ torch::Tensor iterative_3d_warp_cuda(
         points.data_ptr<float>(),
         flow_fields.data_ptr<float>(),
         warped_points.data_ptr<float>(),
-        batch_size, num_points, num_flow_fields, num_z, height, width);
+        batch_size, num_points, num_flow_fields, num_z, max_num_warps, height, width);
 
     return warped_points;
 }

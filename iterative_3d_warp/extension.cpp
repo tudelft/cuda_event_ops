@@ -5,7 +5,8 @@
 // cuda forward declarations
 torch::Tensor iterative_3d_warp_cuda(
     torch::Tensor points,
-    torch::Tensor flow_fields);
+    torch::Tensor flow_fields,
+    int max_num_warps);
 
 
 std::vector<torch::Tensor> iterative_3d_warp_backward_cuda(
@@ -23,12 +24,13 @@ std::vector<torch::Tensor> iterative_3d_warp_backward_cuda(
 
 torch::Tensor iterative_3d_warp_forward(
     torch::Tensor points,
-    torch::Tensor flow_fields) {
+    torch::Tensor flow_fields,
+    int max_num_warps) {
   
     CHECK_INPUT(points);
     CHECK_INPUT(flow_fields);
 
-    return iterative_3d_warp_cuda(points, flow_fields);
+    return iterative_3d_warp_cuda(points, flow_fields, max_num_warps);
 }
 
 
