@@ -121,6 +121,7 @@ __global__ void iterative_3d_warp_kernel(
                 float dz = z - z_next;
 
                 // stop if max number of warps reached
+                // using floored index so -1
                 if (zi - z_next > max_num_warps - 1) break;
 
                 // bilinear interpolation to get flow at (x, y)
