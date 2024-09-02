@@ -21,8 +21,8 @@ class Iterative3DWarpCuda(torch.autograd.Function):
         return grad_points, grad_flow_fields, None
 
 
-def iterative_3d_warp_cuda(points, flow_fields):
-    return Iterative3DWarpCuda.apply(points, flow_fields)
+def iterative_3d_warp_cuda(points, flow_fields, max_num_warps):
+    return Iterative3DWarpCuda.apply(points, flow_fields, max_num_warps)
 
 
 class TrilinearSplatCuda(torch.autograd.Function):
