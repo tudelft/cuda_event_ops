@@ -45,7 +45,7 @@ __global__ void iterative_3d_warp_kernel(
     const float* __restrict__ points, 
     const float* __restrict__ flow_fields, 
     float* __restrict__ warped_points,
-    int batch_size, int num_points, int num_flow_fields, int num_z, int max_num_warps, int height, int width) {
+    int batch_size, int num_points, int num_flow_fields, int num_z, int height, int width) {
     
     // int idx = blockIdx.x * blockDim.x + threadIdx.x;
     // if (idx >= batch_size * num_points) return;
@@ -77,9 +77,6 @@ __global__ void iterative_3d_warp_kernel(
         // start with next integer z value
         for (int z_next = zi + 1; z_next < num_z; z_next++) {
             float dz = z_next - z;
-
-            // stop if max number of warps reached
-            if (z_next - zi > max_num_warps) break;
 
             // bilinear interpolation to get flow at (x, y)
             const float* flow_field = flow_fields + batch_idx * num_flow_fields * height * width * 2 + (z_next - 1) * height * width * 2;
@@ -119,10 +116,6 @@ __global__ void iterative_3d_warp_kernel(
             // start with previous integer z value
             for (int z_next = zi; z_next > -1; z_next--) {
                 float dz = z - z_next;
-
-                // stop if max number of warps reached
-                // using floored index so -1
-                if (zi - z_next > max_num_warps - 1) break;
 
                 // bilinear interpolation to get flow at (x, y)
                 const float* flow_field = flow_fields + batch_idx * num_flow_fields * height * width * 2 + z_next * height * width * 2;
@@ -346,8 +339,7 @@ __global__ void iterative_3d_warp_backward_kernel(
 
 torch::Tensor iterative_3d_warp_cuda(
     torch::Tensor points,
-    torch::Tensor flow_fields,
-    int max_num_warps) {
+    torch::Tensor flow_fields) {
 
     int batch_size = points.size(0);
     int num_points = points.size(1);
@@ -370,7 +362,7 @@ torch::Tensor iterative_3d_warp_cuda(
         points.data_ptr<float>(),
         flow_fields.data_ptr<float>(),
         warped_points.data_ptr<float>(),
-        batch_size, num_points, num_flow_fields, num_z, max_num_warps, height, width);
+        batch_size, num_points, num_flow_fields, num_z, height, width);
 
     return warped_points;
 }
