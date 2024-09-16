@@ -7,22 +7,24 @@ from trilinear_splat_cuda._C import trilinear_splat_forward, trilinear_splat_bac
 class Iterative3DWarpCuda(torch.autograd.Function):
 
     @staticmethod
-    def forward(ctx, points, flow_fields):
-        warped_points = iterative_3d_warp_forward(points, flow_fields)
+    def forward(ctx, points, flow_fields, num_warps):
+        warped_points = iterative_3d_warp_forward(points, flow_fields, num_warps)
         ctx.save_for_backward(points, flow_fields, warped_points)
+        ctx.num_warps = num_warps
         return warped_points
 
     @staticmethod
     def backward(ctx, grad_output):
         points, flow_fields, warped_points = ctx.saved_tensors
+        num_warps = ctx.num_warps
         grad_points, grad_flow_fields = iterative_3d_warp_backward(
-            grad_output.contiguous(), points, flow_fields, warped_points
+            grad_output.contiguous(), points, flow_fields, warped_points, num_warps
         )
-        return grad_points, grad_flow_fields
+        return grad_points, grad_flow_fields, None
 
 
-def iterative_3d_warp_cuda(points, flow_fields):
-    return Iterative3DWarpCuda.apply(points, flow_fields)
+def iterative_3d_warp_cuda(points, flow_fields, num_warps):
+    return Iterative3DWarpCuda.apply(points, flow_fields, num_warps)
 
 
 class TrilinearSplatCuda(torch.autograd.Function):

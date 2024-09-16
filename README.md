@@ -18,7 +18,7 @@ pip install git+ssh://git@github.com/Huizerd/cuda_3d_ops
 - [x] Check for zero val in splatting
 - [ ] Out of bounds check in warp is not consistent with ifs in splat?
 - [ ] WIP: look into gradient issue with splatting
-- [ ] WIP: allow to define number of warps? and get correct gradients (don't start at ends)
+- [x] WIP: allow to define number of warps? and get correct gradients (don't start at ends)
 - [ ] Check best approach to threads: one per point? Or independent of points?
 - [ ] Use accessors to make CUDA code more readable
 - [ ] Beautify code generally
