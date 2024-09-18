@@ -145,14 +145,12 @@ __global__ void trilinear_splat_backward_kernel(
 torch::Tensor trilinear_splat_cuda(
     torch::Tensor points,
     torch::Tensor grid,
-    int grid_d, int grid_h, int grid_w) {
+    int grid_d, int grid_h, int grid_w, int threads) {
   
     int batch_size = points.size(0);
     int num_points = points.size(1);
 
     // one thread per point
-    // TODO: less is more optimal?
-    const int threads = 1024;
     const int blocks = (batch_size * num_points + threads - 1) / threads;
     
     trilinear_splat_kernel<<<blocks, threads>>>(
@@ -167,7 +165,7 @@ torch::Tensor trilinear_splat_cuda(
 torch::Tensor trilinear_splat_backward_cuda(
     torch::Tensor grad_output,
     torch::Tensor points,
-    int grid_d, int grid_h, int grid_w) {
+    int grid_d, int grid_h, int grid_w, int threads) {
 
     int batch_size = points.size(0);
     int num_points = points.size(1);
@@ -175,8 +173,6 @@ torch::Tensor trilinear_splat_backward_cuda(
     auto grad_points = torch::zeros_like(points);
 
     // one thread per point
-    // TODO: less is more optimal?
-    const int threads = 1024;
     const int blocks = (batch_size * num_points + threads - 1) / threads;
     
     trilinear_splat_backward_kernel<<<blocks, threads>>>(

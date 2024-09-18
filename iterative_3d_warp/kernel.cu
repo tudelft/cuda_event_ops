@@ -347,7 +347,7 @@ __global__ void iterative_3d_warp_backward_kernel(
 torch::Tensor iterative_3d_warp_cuda(
     torch::Tensor points,
     torch::Tensor flow_fields,
-    int num_warps) {
+    int num_warps, int threads) {
 
     int batch_size = points.size(0);
     int num_points = points.size(1);
@@ -362,8 +362,6 @@ torch::Tensor iterative_3d_warp_cuda(
     auto warped_points = torch::zeros({batch_size, num_points, num_z, 5}, points.options());
 
     // one thread per point
-    // TODO: less is more optimal?
-    int threads = 1024;
     int blocks = (batch_size * num_points + threads - 1) / threads;
 
     iterative_3d_warp_kernel<<<blocks, threads>>>(
@@ -381,7 +379,7 @@ std::vector<torch::Tensor> iterative_3d_warp_backward_cuda(
     torch::Tensor points,
     torch::Tensor flow_fields,
     torch::Tensor warped_points,
-    int num_warps) {
+    int num_warps, int threads) {
 
     int batch_size = points.size(0);
     int num_points = points.size(1);
@@ -394,8 +392,6 @@ std::vector<torch::Tensor> iterative_3d_warp_backward_cuda(
     auto grad_flow_fields = torch::zeros_like(flow_fields);
 
     // one thread per point
-    // TODO: less is more optimal?
-    int threads = 1024;
     int blocks = (batch_size * num_points + threads - 1) / threads;
 
     iterative_3d_warp_backward_kernel<<<blocks, threads>>>(
