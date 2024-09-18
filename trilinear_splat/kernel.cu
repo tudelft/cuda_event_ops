@@ -13,7 +13,6 @@ __global__ void trilinear_splat_kernel(
   
     // one thread can handle multiple points
     // useful when points >> threads
-    // TODO: compare performance with one point per thread
     CUDA_KERNEL_LOOP(index, batch_size * num_points) {
         // indices
         int bi = index / num_points;
@@ -81,7 +80,6 @@ __global__ void trilinear_splat_backward_kernel(
   
     // one thread can handle multiple points
     // useful when points >> threads
-    // TODO: compare performance with one point per thread
     CUDA_KERNEL_LOOP(index, batch_size * num_points) {
         // indices
         int bi = index / num_points;
@@ -145,13 +143,13 @@ __global__ void trilinear_splat_backward_kernel(
 torch::Tensor trilinear_splat_cuda(
     torch::Tensor points,
     torch::Tensor grid,
-    int grid_d, int grid_h, int grid_w, int threads) {
+    int grid_d, int grid_h, int grid_w, int threads, int points_per_thread) {
   
     int batch_size = points.size(0);
     int num_points = points.size(1);
 
-    // one thread per point
-    const int blocks = (batch_size * num_points + threads - 1) / threads;
+    // one or multiple points per thread
+    const int blocks = (batch_size * num_points + threads - 1) / threads / points_per_thread;
     
     trilinear_splat_kernel<<<blocks, threads>>>(
         points.packed_accessor32<float,3,torch::RestrictPtrTraits>(),
@@ -165,15 +163,15 @@ torch::Tensor trilinear_splat_cuda(
 torch::Tensor trilinear_splat_backward_cuda(
     torch::Tensor grad_output,
     torch::Tensor points,
-    int grid_d, int grid_h, int grid_w, int threads) {
+    int grid_d, int grid_h, int grid_w, int threads, int points_per_thread) {
 
     int batch_size = points.size(0);
     int num_points = points.size(1);
 
     auto grad_points = torch::zeros_like(points);
 
-    // one thread per point
-    const int blocks = (batch_size * num_points + threads - 1) / threads;
+    // one or multiple points per thread
+    const int blocks = (batch_size * num_points + threads - 1) / threads / points_per_thread;
     
     trilinear_splat_backward_kernel<<<blocks, threads>>>(
         grad_output.packed_accessor32<float,4,torch::RestrictPtrTraits>(),

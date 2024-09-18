@@ -5,13 +5,13 @@
 torch::Tensor trilinear_splat_cuda(
     torch::Tensor points,
     torch::Tensor grid,
-    int grid_d, int grid_h, int grid_w, int threads);
+    int grid_d, int grid_h, int grid_w, int threads, int points_per_thread);
 
 
 torch::Tensor trilinear_splat_backward_cuda(
     torch::Tensor grad_output,
     torch::Tensor points,
-    int grid_d, int grid_h, int grid_w, int threads);
+    int grid_d, int grid_h, int grid_w, int threads, int points_per_thread);
 
 
 // c++ interface
@@ -22,24 +22,24 @@ torch::Tensor trilinear_splat_backward_cuda(
 
 torch::Tensor trilinear_splat_forward(
     torch::Tensor points,
-    int grid_d, int grid_h, int grid_w, int threads) {
+    int grid_d, int grid_h, int grid_w, int threads, int points_per_thread) {
   
     CHECK_INPUT(points);
     auto grid = torch::zeros({points.size(0), grid_d, grid_h, grid_w}, points.options());
 
-    return trilinear_splat_cuda(points, grid, grid_d, grid_h, grid_w, threads);
+    return trilinear_splat_cuda(points, grid, grid_d, grid_h, grid_w, threads, points_per_thread);
 }
 
 
 torch::Tensor trilinear_splat_backward(
     torch::Tensor grad_output,
     torch::Tensor points,
-    int grid_d, int grid_h, int grid_w, int threads) {
+    int grid_d, int grid_h, int grid_w, int threads, int points_per_thread) {
   
     CHECK_INPUT(grad_output);
     CHECK_INPUT(points);
 
-    return trilinear_splat_backward_cuda(grad_output, points, grid_d, grid_h, grid_w, threads);
+    return trilinear_splat_backward_cuda(grad_output, points, grid_d, grid_h, grid_w, threads, points_per_thread);
 }
 
 
