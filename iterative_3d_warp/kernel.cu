@@ -10,7 +10,7 @@
 __device__ bool check_out_of_bounds(
     float x, float y,
     float x_min, float x_max, float y_min, float y_max) {
-    return (x < x_min || x >= x_max || y < y_min || y >= y_max);
+    return (x < x_min || x > x_max || y < y_min || y > y_max);
 }
 
 
