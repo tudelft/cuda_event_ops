@@ -74,8 +74,8 @@ __global__ void iterative_3d_warp_kernel(
         for (int z_next = zi + 1; z_next < num_z; z_next++) {
             float dz = z_next - z;
 
-            // stop if number of warps reached
-            if (z_next - zi > num_warps) break;
+            // value to 0 if number of warps reached
+            if (z_next - zi > num_warps) val = 0;
 
             // bilinear interpolation to get flow at (x, y)
             const float* flow_field = flow_fields + batch_idx * num_flow_fields * height * width * 2 + (z_next - 1) * height * width * 2;
@@ -105,20 +105,21 @@ __global__ void iterative_3d_warp_kernel(
 
         // only do if not out of bounds
         if (!is_out_of_bounds) {
-            // reload point coordinates
+            // reload point
             x = points[batch_idx * num_points * 5 + point_idx * 5];
             y = points[batch_idx * num_points * 5 + point_idx * 5 + 1];
             z = points[batch_idx * num_points * 5 + point_idx * 5 + 2];
             zi = points[batch_idx * num_points * 5 + point_idx * 5 + 3];
+            val = points[batch_idx * num_points * 5 + point_idx * 5 + 4];
 
             // warp backward: decreasing z values
             // start with previous integer z value
             for (int z_next = zi; z_next > -1; z_next--) {
                 float dz = z - z_next;
 
-                // stop if max number of warps reached
+                // value to 0 if max number of warps reached
                 // using floored index so -1
-                if (zi - z_next > num_warps - 1) break;
+                if (zi - z_next > num_warps - 1) val = 0;
 
                 // bilinear interpolation to get flow at (x, y)
                 const float* flow_field = flow_fields + batch_idx * num_flow_fields * height * width * 2 + z_next * height * width * 2;
