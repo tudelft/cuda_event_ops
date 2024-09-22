@@ -6,7 +6,7 @@
 torch::Tensor iterative_3d_warp_cuda(
     torch::Tensor points,
     torch::Tensor flow_fields,
-    int num_warps, int threads, int points_per_thread);
+    int num_warps, bool keep_warping, int threads, int points_per_thread);
 
 
 std::vector<torch::Tensor> iterative_3d_warp_backward_cuda(
@@ -26,12 +26,12 @@ std::vector<torch::Tensor> iterative_3d_warp_backward_cuda(
 torch::Tensor iterative_3d_warp_forward(
     torch::Tensor points,
     torch::Tensor flow_fields,
-    int num_warps, int threads, int points_per_thread) {
+    int num_warps, bool keep_warping, int threads, int points_per_thread) {
   
     CHECK_INPUT(points);
     CHECK_INPUT(flow_fields);
 
-    return iterative_3d_warp_cuda(points, flow_fields, num_warps, threads, points_per_thread);
+    return iterative_3d_warp_cuda(points, flow_fields, num_warps, keep_warping, threads, points_per_thread);
 }
 
 
