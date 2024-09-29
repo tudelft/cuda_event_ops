@@ -212,6 +212,7 @@ if __name__ == "__main__":
     }
     grads, losses = [], []
     seed = torch.randint(0, 1000, (1,)).item()
+    dtype = torch.float
     print(f"Seed: {seed}")
     for name, functions in methods.items():
         torch.manual_seed(seed)
@@ -220,14 +221,14 @@ if __name__ == "__main__":
         # b, d, h, w = 1, 4, 6, 6
         b, d, h, w = 1, 3, 5, 5
         # events = torch.tensor([[[1.0, 1.0, 3.0, 2, 1.0]]], device="cuda")  # (b, n, 5): x, y, z, zi, val
-        events = torch.rand((b, n, 5), device="cuda") * torch.tensor([w - 1, h - 1, d, d - 1, 1.0], device="cuda")
+        events = torch.rand((b, n, 5), device="cuda", dtype=dtype) * torch.tensor([w - 1, h - 1, d, d - 1, 1.0], device="cuda", dtype=dtype)
         events[..., 3] = events[..., 2].floor()
         # flows = torch.zeros((b, d, h, w, 2), device="cuda")  # (b, d, h, w, 2): u, v flow from z to z+1
         # flows[0, 1, 1, 1, 0] = 1
         # flows[0, 2, 1, 2, 0] = 1
         # flows[0, 3, 1, 3, 0] = 1
-        flow_mag = torch.tensor([0.5, 0.0], device="cuda")
-        flows = torch.rand((b, 1, h, w, 2), device="cuda").repeat(1, d, 1, 1, 1) * flow_mag
+        flow_mag = torch.tensor([0.5, 0.0], device="cuda", dtype=dtype)
+        flows = torch.rand((b, 1, h, w, 2), device="cuda", dtype=dtype).repeat(1, d, 1, 1, 1) * flow_mag
         flows.requires_grad = True
         visualize_tensor(flows[..., 0].detach(), title=f"x flow field {name}", folder="figures/test_warp_events")
 

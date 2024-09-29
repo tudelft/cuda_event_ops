@@ -23,7 +23,7 @@ def visualize_tensor(tensor, title="", figsize=(6, 2), folder="figures/test_3d_w
     fig = plt.figure(figsize=figsize)
     grid = ImageGrid(fig, 111, (b, d), axes_pad=0.1)
     for i in range(b * d):
-        grid[i].imshow(tensor[i].cpu().numpy())
+        grid[i].imshow(tensor[i].float().cpu().numpy())
         grid[i].axis("off")
 
     # add pixel values as text
