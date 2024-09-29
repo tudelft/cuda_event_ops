@@ -1,3 +1,5 @@
+#include <ATen/ATen.h>
+#include <ATen/native/cuda/KernelUtils.cuh>
 #include <torch/extension.h>
 #include <vector>
 
@@ -7,27 +9,29 @@
         i += blockDim.x * gridDim.x)
 
 
+template <typename scalar_t, typename index_t>
 __device__ bool check_out_of_bounds(
-    float x, float y,
-    float x_min, float x_max, float y_min, float y_max) {
-    return (x < x_min || x >= x_max || y < y_min || y >= y_max);
+    scalar_t x, scalar_t y,
+    index_t x_min, index_t x_max, index_t y_min, index_t y_max) {
+    return (x < static_cast<scalar_t>(x_min) || x >= static_cast<scalar_t>(x_max) || y < static_cast<scalar_t>(y_min) || y >= static_cast<scalar_t>(y_max));
 }
 
 
+template <typename scalar_t, typename index_t>
 __device__ void bilinear_interpolation(
-    const float* flow_field,
-    int height, int width, float x, float y,
-    float& flow_x, float& flow_y) {
+    const scalar_t* flow_field,
+    index_t height, index_t width, scalar_t x, scalar_t y,
+    scalar_t& flow_x, scalar_t& flow_y) {
 
-    int x0 = floor(x);
-    int y0 = floor(y);
-    int x1 = x0 + 1;
-    int y1 = y0 + 1;
+    index_t x0 = floor(x);
+    index_t y0 = floor(y);
+    index_t x1 = x0 + 1;
+    index_t y1 = y0 + 1;
 
-    float w00 = (x1 - x) * (y1 - y);  // top left
-    float w01 = (x - x0) * (y1 - y);  // top right
-    float w10 = (x1 - x) * (y - y0);  // bottom left
-    float w11 = (x - x0) * (y - y0);  // bottom right
+    scalar_t w00 = (x1 - x) * (y1 - y);  // top left
+    scalar_t w01 = (x - x0) * (y1 - y);  // top right
+    scalar_t w10 = (x1 - x) * (y - y0);  // bottom left
+    scalar_t w11 = (x - x0) * (y - y0);  // bottom right
 
     flow_x = w00 * flow_field[(y0 * width + x0) * 2] +
              w01 * flow_field[(y0 * width + x1) * 2] +
@@ -41,10 +45,11 @@ __device__ void bilinear_interpolation(
 }
 
 
+template <typename scalar_t>
 __global__ void iterative_3d_warp_kernel(
-    const float* __restrict__ points, 
-    const float* __restrict__ flow_fields, 
-    float* __restrict__ warped_points,
+    const scalar_t* __restrict__ points,
+    const scalar_t* __restrict__ flow_fields,
+    scalar_t* __restrict__ warped_points,
     int batch_size, int num_points, int num_flow_fields, int num_z, int num_warps, bool keep_warping, int height, int width) {
     
     // one thread can handle multiple points
@@ -55,12 +60,12 @@ __global__ void iterative_3d_warp_kernel(
         int point_idx = idx % num_points;
 
         // load point
-        float x = points[batch_idx * num_points * 5 + point_idx * 5];
-        float y = points[batch_idx * num_points * 5 + point_idx * 5 + 1];
-        float z = points[batch_idx * num_points * 5 + point_idx * 5 + 2];
+        scalar_t x = points[batch_idx * num_points * 5 + point_idx * 5];
+        scalar_t y = points[batch_idx * num_points * 5 + point_idx * 5 + 1];
+        scalar_t z = points[batch_idx * num_points * 5 + point_idx * 5 + 2];
         int zi = points[batch_idx * num_points * 5 + point_idx * 5 + 3];
-        float val = points[batch_idx * num_points * 5 + point_idx * 5 + 4];
-        float z_orig = z;
+        scalar_t val = points[batch_idx * num_points * 5 + point_idx * 5 + 4];
+        scalar_t z_orig = z;
 
         // skip if value is zero
         if (val == 0) return;
@@ -72,7 +77,7 @@ __global__ void iterative_3d_warp_kernel(
         // warp forward: increasing z values
         // start with next integer z value
         for (int z_next = zi + 1; z_next < num_z; z_next++) {
-            float dz = z_next - z;
+            scalar_t dz = z_next - z;
 
             // if keep_warping: value to 0 if number of warps reached; else break
             if (z_next - zi > num_warps) {
@@ -84,8 +89,8 @@ __global__ void iterative_3d_warp_kernel(
             }
 
             // bilinear interpolation to get flow at (x, y)
-            const float* flow_field = flow_fields + batch_idx * num_flow_fields * height * width * 2 + (z_next - 1) * height * width * 2;
-            float flow_x, flow_y;
+            const scalar_t* flow_field = flow_fields + batch_idx * num_flow_fields * height * width * 2 + (z_next - 1) * height * width * 2;
+            scalar_t flow_x, flow_y;
             bilinear_interpolation(flow_field, height, width, x, y, flow_x, flow_y);
             
             // warp point position
@@ -121,7 +126,7 @@ __global__ void iterative_3d_warp_kernel(
             // warp backward: decreasing z values
             // start with previous integer z value
             for (int z_next = zi; z_next > -1; z_next--) {
-                float dz = z - z_next;
+                scalar_t dz = z - z_next;
 
                 // if keep_warping: value to 0 if max number of warps reached, else break
                 // using floored index so -1
@@ -134,8 +139,8 @@ __global__ void iterative_3d_warp_kernel(
                 }
 
                 // bilinear interpolation to get flow at (x, y)
-                const float* flow_field = flow_fields + batch_idx * num_flow_fields * height * width * 2 + z_next * height * width * 2;
-                float flow_x, flow_y;
+                const scalar_t* flow_field = flow_fields + batch_idx * num_flow_fields * height * width * 2 + z_next * height * width * 2;
+                scalar_t flow_x, flow_y;
                 bilinear_interpolation(flow_field, height, width, x, y, flow_x, flow_y);
 
                 // warp point position
@@ -171,13 +176,14 @@ __global__ void iterative_3d_warp_kernel(
 }
 
 
+template <typename scalar_t>
 __global__ void iterative_3d_warp_backward_kernel(
-    const float* __restrict__ grad_output, 
-    const float* __restrict__ points, 
-    const float* __restrict__ flow_fields,
-    const float* __restrict__ warped_points,
-    float* __restrict__ grad_points,
-    float* __restrict__ grad_flow_fields,
+    const scalar_t* __restrict__ grad_output, 
+    const scalar_t* __restrict__ points, 
+    const scalar_t* __restrict__ flow_fields,
+    const scalar_t* __restrict__ warped_points,
+    scalar_t* __restrict__ grad_points,
+    scalar_t* __restrict__ grad_flow_fields,
     int batch_size, int num_points, int num_flow_fields, int num_z, int num_warps, int height, int width) {
 
     // one thread can handle multiple points
@@ -188,20 +194,20 @@ __global__ void iterative_3d_warp_backward_kernel(
         int point_idx = idx % num_points;
 
         // load starting z
-        float z_orig = points[batch_idx * num_points * 5 + point_idx * 5 + 2];
+        scalar_t z_orig = points[batch_idx * num_points * 5 + point_idx * 5 + 2];
         int zi = points[batch_idx * num_points * 5 + point_idx * 5 + 3];
 
         // check if point was out of bounds (or zero padding): all values are zero
         if (warped_points[batch_idx * num_points * num_z * 5 + point_idx * num_z * 5 + zi * 5 + 4] == 0) return;
 
         // accumulate gradients for points
-        float grad_warped_point_x = 0;
-        float grad_warped_point_y = 0;
+        scalar_t grad_warped_point_x = 0;
+        scalar_t grad_warped_point_y = 0;
 
         // iterate over z values in reverse for forward warping gradient computation
         for (int z_next = min(num_z - 1, zi + num_warps); z_next > zi; z_next--) {
             // get previous warped point position
-            float prev_x, prev_y, dz;
+            scalar_t prev_x, prev_y, dz;
             if (z_next == zi + 1) {
                 prev_x = points[batch_idx * num_points * 5 + point_idx * 5];
                 prev_y = points[batch_idx * num_points * 5 + point_idx * 5 + 1];
@@ -219,10 +225,10 @@ __global__ void iterative_3d_warp_backward_kernel(
             int x1 = x0 + 1;
             int y1 = y0 + 1;
 
-            float w00 = (x1 - prev_x) * (y1 - prev_y);  // top left
-            float w01 = (prev_x - x0) * (y1 - prev_y);  // top right
-            float w10 = (x1 - prev_x) * (prev_y - y0);  // bottom left
-            float w11 = (prev_x - x0) * (prev_y - y0);  // bottom right
+            scalar_t w00 = (x1 - prev_x) * (y1 - prev_y);  // top left
+            scalar_t w01 = (prev_x - x0) * (y1 - prev_y);  // top right
+            scalar_t w10 = (x1 - prev_x) * (prev_y - y0);  // bottom left
+            scalar_t w11 = (prev_x - x0) * (prev_y - y0);  // bottom right
 
             // add output gradients
             int output_idx = batch_idx * num_points * num_z * 5 + point_idx * num_z * 5 + z_next * 5;
@@ -230,16 +236,17 @@ __global__ void iterative_3d_warp_backward_kernel(
             grad_warped_point_y += grad_output[output_idx + 1];
 
             // add grads wrt x flow
-            atomicAdd(&grad_flow_fields[batch_idx * num_flow_fields * height * width * 2 + (z_next - 1) * height * width * 2 + (y0 * width + x0) * 2], grad_warped_point_x * w00 * dz);
-            atomicAdd(&grad_flow_fields[batch_idx * num_flow_fields * height * width * 2 + (z_next - 1) * height * width * 2 + (y0 * width + x1) * 2], grad_warped_point_x * w01 * dz);
-            atomicAdd(&grad_flow_fields[batch_idx * num_flow_fields * height * width * 2 + (z_next - 1) * height * width * 2 + (y1 * width + x0) * 2], grad_warped_point_x * w10 * dz);
-            atomicAdd(&grad_flow_fields[batch_idx * num_flow_fields * height * width * 2 + (z_next - 1) * height * width * 2 + (y1 * width + x1) * 2], grad_warped_point_x * w11 * dz);
+            int numel = batch_size * num_flow_fields * height * width * 2;
+            at::native::fastAtomicAdd(grad_flow_fields, batch_idx * num_flow_fields * height * width * 2 + (z_next - 1) * height * width * 2 + (y0 * width + x0) * 2, numel, grad_warped_point_x * w00 * dz, true);
+            at::native::fastAtomicAdd(grad_flow_fields, batch_idx * num_flow_fields * height * width * 2 + (z_next - 1) * height * width * 2 + (y0 * width + x1) * 2, numel, grad_warped_point_x * w01 * dz, true);
+            at::native::fastAtomicAdd(grad_flow_fields, batch_idx * num_flow_fields * height * width * 2 + (z_next - 1) * height * width * 2 + (y1 * width + x0) * 2, numel, grad_warped_point_x * w10 * dz, true);
+            at::native::fastAtomicAdd(grad_flow_fields, batch_idx * num_flow_fields * height * width * 2 + (z_next - 1) * height * width * 2 + (y1 * width + x1) * 2, numel, grad_warped_point_x * w11 * dz, true);
             
             // add grads wrt y flow
-            atomicAdd(&grad_flow_fields[batch_idx * num_flow_fields * height * width * 2 + (z_next - 1) * height * width * 2 + (y0 * width + x0) * 2 + 1], grad_warped_point_y * w00 * dz);
-            atomicAdd(&grad_flow_fields[batch_idx * num_flow_fields * height * width * 2 + (z_next - 1) * height * width * 2 + (y0 * width + x1) * 2 + 1], grad_warped_point_y * w01 * dz);
-            atomicAdd(&grad_flow_fields[batch_idx * num_flow_fields * height * width * 2 + (z_next - 1) * height * width * 2 + (y1 * width + x0) * 2 + 1], grad_warped_point_y * w10 * dz);
-            atomicAdd(&grad_flow_fields[batch_idx * num_flow_fields * height * width * 2 + (z_next - 1) * height * width * 2 + (y1 * width + x1) * 2 + 1], grad_warped_point_y * w11 * dz);
+            at::native::fastAtomicAdd(grad_flow_fields, batch_idx * num_flow_fields * height * width * 2 + (z_next - 1) * height * width * 2 + (y0 * width + x0) * 2 + 1, numel, grad_warped_point_y * w00 * dz, true);
+            at::native::fastAtomicAdd(grad_flow_fields, batch_idx * num_flow_fields * height * width * 2 + (z_next - 1) * height * width * 2 + (y0 * width + x1) * 2 + 1, numel, grad_warped_point_y * w01 * dz, true);
+            at::native::fastAtomicAdd(grad_flow_fields, batch_idx * num_flow_fields * height * width * 2 + (z_next - 1) * height * width * 2 + (y1 * width + x0) * 2 + 1, numel, grad_warped_point_y * w10 * dz, true);
+            at::native::fastAtomicAdd(grad_flow_fields, batch_idx * num_flow_fields * height * width * 2 + (z_next - 1) * height * width * 2 + (y1 * width + x1) * 2 + 1, numel, grad_warped_point_y * w11 * dz, true);
 
             // calculate grad wrt xy
             // changes in flow field
@@ -248,24 +255,24 @@ __global__ void iterative_3d_warp_backward_kernel(
             int idx_10 = batch_idx * num_flow_fields * height * width * 2 + (z_next - 1) * height * width * 2 + (y1 * width + x0) * 2;
             int idx_11 = batch_idx * num_flow_fields * height * width * 2 + (z_next - 1) * height * width * 2 + (y1 * width + x1) * 2;
 
-            float f00_x = flow_fields[idx_00];
-            float f01_x = flow_fields[idx_01];
-            float f10_x = flow_fields[idx_10];
-            float f11_x = flow_fields[idx_11];
-            float f00_y = flow_fields[idx_00 + 1];
-            float f01_y = flow_fields[idx_01 + 1];
-            float f10_y = flow_fields[idx_10 + 1];
-            float f11_y = flow_fields[idx_11 + 1];
+            scalar_t f00_x = flow_fields[idx_00];
+            scalar_t f01_x = flow_fields[idx_01];
+            scalar_t f10_x = flow_fields[idx_10];
+            scalar_t f11_x = flow_fields[idx_11];
+            scalar_t f00_y = flow_fields[idx_00 + 1];
+            scalar_t f01_y = flow_fields[idx_01 + 1];
+            scalar_t f10_y = flow_fields[idx_10 + 1];
+            scalar_t f11_y = flow_fields[idx_11 + 1];
 
-            float dflowx_dx = (f01_x - f00_x) * (y1 - prev_y) + (f11_x - f10_x) * (prev_y - y0);
-            float dflowy_dx = (f01_y - f00_y) * (y1 - prev_y) + (f11_y - f10_y) * (prev_y - y0);
-            float dflowx_dy = (f10_x - f00_x) * (x1 - prev_x) + (f11_x - f01_x) * (prev_x - x0);
-            float dflowy_dy = (f10_y - f00_y) * (x1 - prev_x) + (f11_y - f01_y) * (prev_x - x0);
+            scalar_t dflowx_dx = (f01_x - f00_x) * (y1 - prev_y) + (f11_x - f10_x) * (prev_y - y0);
+            scalar_t dflowy_dx = (f01_y - f00_y) * (y1 - prev_y) + (f11_y - f10_y) * (prev_y - y0);
+            scalar_t dflowx_dy = (f10_x - f00_x) * (x1 - prev_x) + (f11_x - f01_x) * (prev_x - x0);
+            scalar_t dflowy_dy = (f10_y - f00_y) * (x1 - prev_x) + (f11_y - f01_y) * (prev_x - x0);
 
             // add grads wrt x and y point
             // TODO: this looks wrong, but is correct?
-            float grad_point_x = grad_warped_point_x * (1 + dflowx_dx * dz) + grad_warped_point_y * dflowy_dx * dz;
-            float grad_point_y = grad_warped_point_x * dflowx_dy * dz + grad_warped_point_y * (1 + dflowy_dy * dz);
+            scalar_t grad_point_x = grad_warped_point_x * (1 + dflowx_dx * dz) + grad_warped_point_y * dflowy_dx * dz;
+            scalar_t grad_point_y = grad_warped_point_x * dflowx_dy * dz + grad_warped_point_y * (1 + dflowy_dy * dz);
             grad_warped_point_x = grad_point_x;
             grad_warped_point_y = grad_point_y;
         }
@@ -277,7 +284,7 @@ __global__ void iterative_3d_warp_backward_kernel(
         // iterate over z values in reverse for backward warping gradient computation
         for (int z_next = max(0, zi - (num_warps - 1)); z_next <= zi; z_next++) {
             // get previous warped point position
-            float prev_x, prev_y, dz;
+            scalar_t prev_x, prev_y, dz;
             if (z_next == zi) {
                 prev_x = points[batch_idx * num_points * 5 + point_idx * 5];
                 prev_y = points[batch_idx * num_points * 5 + point_idx * 5 + 1];
@@ -295,10 +302,10 @@ __global__ void iterative_3d_warp_backward_kernel(
             int x1 = x0 + 1;
             int y1 = y0 + 1;
 
-            float w00 = (x1 - prev_x) * (y1 - prev_y);  // top left
-            float w01 = (prev_x - x0) * (y1 - prev_y);  // top right
-            float w10 = (x1 - prev_x) * (prev_y - y0);  // bottom left
-            float w11 = (prev_x - x0) * (prev_y - y0);  // bottom right
+            scalar_t w00 = (x1 - prev_x) * (y1 - prev_y);  // top left
+            scalar_t w01 = (prev_x - x0) * (y1 - prev_y);  // top right
+            scalar_t w10 = (x1 - prev_x) * (prev_y - y0);  // bottom left
+            scalar_t w11 = (prev_x - x0) * (prev_y - y0);  // bottom right
 
             // add output gradients
             int output_idx = batch_idx * num_points * num_z * 5 + point_idx * num_z * 5 + z_next * 5;
@@ -306,16 +313,17 @@ __global__ void iterative_3d_warp_backward_kernel(
             grad_warped_point_y += grad_output[output_idx + 1];
 
             // add grads wrt x flow
-            atomicAdd(&grad_flow_fields[batch_idx * num_flow_fields * height * width * 2 + z_next * height * width * 2 + (y0 * width + x0) * 2], grad_warped_point_x * w00 * -dz);
-            atomicAdd(&grad_flow_fields[batch_idx * num_flow_fields * height * width * 2 + z_next * height * width * 2 + (y0 * width + x1) * 2], grad_warped_point_x * w01 * -dz);
-            atomicAdd(&grad_flow_fields[batch_idx * num_flow_fields * height * width * 2 + z_next * height * width * 2 + (y1 * width + x0) * 2], grad_warped_point_x * w10 * -dz);
-            atomicAdd(&grad_flow_fields[batch_idx * num_flow_fields * height * width * 2 + z_next * height * width * 2 + (y1 * width + x1) * 2], grad_warped_point_x * w11 * -dz);
+            int numel = batch_size * num_flow_fields * height * width * 2;
+            at::native::fastAtomicAdd(grad_flow_fields, batch_idx * num_flow_fields * height * width * 2 + z_next * height * width * 2 + (y0 * width + x0) * 2, numel, grad_warped_point_x * w00 * -dz, true);
+            at::native::fastAtomicAdd(grad_flow_fields, batch_idx * num_flow_fields * height * width * 2 + z_next * height * width * 2 + (y0 * width + x1) * 2, numel, grad_warped_point_x * w01 * -dz, true);
+            at::native::fastAtomicAdd(grad_flow_fields, batch_idx * num_flow_fields * height * width * 2 + z_next * height * width * 2 + (y1 * width + x0) * 2, numel, grad_warped_point_x * w10 * -dz, true);
+            at::native::fastAtomicAdd(grad_flow_fields, batch_idx * num_flow_fields * height * width * 2 + z_next * height * width * 2 + (y1 * width + x1) * 2, numel, grad_warped_point_x * w11 * -dz, true);
             
             // add grads wrt y flow
-            atomicAdd(&grad_flow_fields[batch_idx * num_flow_fields * height * width * 2 + z_next * height * width * 2 + (y0 * width + x0) * 2 + 1], grad_warped_point_y * w00 * -dz);
-            atomicAdd(&grad_flow_fields[batch_idx * num_flow_fields * height * width * 2 + z_next * height * width * 2 + (y0 * width + x1) * 2 + 1], grad_warped_point_y * w01 * -dz);
-            atomicAdd(&grad_flow_fields[batch_idx * num_flow_fields * height * width * 2 + z_next * height * width * 2 + (y1 * width + x0) * 2 + 1], grad_warped_point_y * w10 * -dz);
-            atomicAdd(&grad_flow_fields[batch_idx * num_flow_fields * height * width * 2 + z_next * height * width * 2 + (y1 * width + x1) * 2 + 1], grad_warped_point_y * w11 * -dz);
+            at::native::fastAtomicAdd(grad_flow_fields, batch_idx * num_flow_fields * height * width * 2 + z_next * height * width * 2 + (y0 * width + x0) * 2 + 1, numel, grad_warped_point_y * w00 * -dz, true);
+            at::native::fastAtomicAdd(grad_flow_fields, batch_idx * num_flow_fields * height * width * 2 + z_next * height * width * 2 + (y0 * width + x1) * 2 + 1, numel, grad_warped_point_y * w01 * -dz, true);
+            at::native::fastAtomicAdd(grad_flow_fields, batch_idx * num_flow_fields * height * width * 2 + z_next * height * width * 2 + (y1 * width + x0) * 2 + 1, numel, grad_warped_point_y * w10 * -dz, true);
+            at::native::fastAtomicAdd(grad_flow_fields, batch_idx * num_flow_fields * height * width * 2 + z_next * height * width * 2 + (y1 * width + x1) * 2 + 1, numel, grad_warped_point_y * w11 * -dz, true);
 
             // calculate grad wrt xy
             // changes in flow field
@@ -324,24 +332,24 @@ __global__ void iterative_3d_warp_backward_kernel(
             int idx_10 = batch_idx * num_flow_fields * height * width * 2 + z_next * height * width * 2 + (y1 * width + x0) * 2;
             int idx_11 = batch_idx * num_flow_fields * height * width * 2 + z_next * height * width * 2 + (y1 * width + x1) * 2;
 
-            float f00_x = flow_fields[idx_00];
-            float f01_x = flow_fields[idx_01];
-            float f10_x = flow_fields[idx_10];
-            float f11_x = flow_fields[idx_11];
-            float f00_y = flow_fields[idx_00 + 1];
-            float f01_y = flow_fields[idx_01 + 1];
-            float f10_y = flow_fields[idx_10 + 1];
-            float f11_y = flow_fields[idx_11 + 1];
+            scalar_t f00_x = flow_fields[idx_00];
+            scalar_t f01_x = flow_fields[idx_01];
+            scalar_t f10_x = flow_fields[idx_10];
+            scalar_t f11_x = flow_fields[idx_11];
+            scalar_t f00_y = flow_fields[idx_00 + 1];
+            scalar_t f01_y = flow_fields[idx_01 + 1];
+            scalar_t f10_y = flow_fields[idx_10 + 1];
+            scalar_t f11_y = flow_fields[idx_11 + 1];
 
-            float dflowx_dx = (f01_x - f00_x) * (y1 - prev_y) + (f11_x - f10_x) * (prev_y - y0);
-            float dflowy_dx = (f01_y - f00_y) * (y1 - prev_y) + (f11_y - f10_y) * (prev_y - y0);
-            float dflowx_dy = (f10_x - f00_x) * (x1 - prev_x) + (f11_x - f01_x) * (prev_x - x0);
-            float dflowy_dy = (f10_y - f00_y) * (x1 - prev_x) + (f11_y - f01_y) * (prev_x - x0);
+            scalar_t dflowx_dx = (f01_x - f00_x) * (y1 - prev_y) + (f11_x - f10_x) * (prev_y - y0);
+            scalar_t dflowy_dx = (f01_y - f00_y) * (y1 - prev_y) + (f11_y - f10_y) * (prev_y - y0);
+            scalar_t dflowx_dy = (f10_x - f00_x) * (x1 - prev_x) + (f11_x - f01_x) * (prev_x - x0);
+            scalar_t dflowy_dy = (f10_y - f00_y) * (x1 - prev_x) + (f11_y - f01_y) * (prev_x - x0);
 
             // add grads wrt x and y point
             // TODO: this looks wrong, but is correct?
-            float grad_point_x = grad_warped_point_x * (1 + dflowx_dx * -dz) + grad_warped_point_y * dflowy_dx * -dz;
-            float grad_point_y = grad_warped_point_x * dflowx_dy * -dz + grad_warped_point_y * (1 + dflowy_dy * -dz);
+            scalar_t grad_point_x = grad_warped_point_x * (1 + dflowx_dx * -dz) + grad_warped_point_y * dflowy_dx * -dz;
+            scalar_t grad_point_y = grad_warped_point_x * dflowx_dy * -dz + grad_warped_point_y * (1 + dflowy_dy * -dz);
             grad_warped_point_x = grad_point_x;
             grad_warped_point_y = grad_point_y;
         }
@@ -369,11 +377,13 @@ torch::Tensor iterative_3d_warp_cuda(
     // one or multiple points per thread
     int blocks = (batch_size * num_points + threads - 1) / threads / points_per_thread;
 
-    iterative_3d_warp_kernel<<<blocks, threads>>>(
-        points.data_ptr<float>(),
-        flow_fields.data_ptr<float>(),
-        warped_points.data_ptr<float>(),
-        batch_size, num_points, num_flow_fields, num_z, num_warps, keep_warping, height, width);
+    AT_DISPATCH_FLOATING_TYPES_AND2(torch::ScalarType::Half, torch::ScalarType::BFloat16, points.scalar_type(), "iterative_3d_warp_cuda", [&] {
+        iterative_3d_warp_kernel<scalar_t><<<blocks, threads>>>(
+            points.data_ptr<scalar_t>(),
+            flow_fields.data_ptr<scalar_t>(),
+            warped_points.data_ptr<scalar_t>(),
+            batch_size, num_points, num_flow_fields, num_z, num_warps, keep_warping, height, width);
+    });
 
     return warped_points;
 }
@@ -399,14 +409,16 @@ std::vector<torch::Tensor> iterative_3d_warp_backward_cuda(
     // one or multiple points per thread
     int blocks = (batch_size * num_points + threads - 1) / threads / points_per_thread;
 
-    iterative_3d_warp_backward_kernel<<<blocks, threads>>>(
-        grad_output.data_ptr<float>(),
-        points.data_ptr<float>(),
-        flow_fields.data_ptr<float>(),
-        warped_points.data_ptr<float>(),
-        grad_points.data_ptr<float>(),
-        grad_flow_fields.data_ptr<float>(),
-        batch_size, num_points, num_flow_fields, num_z, num_warps, height, width);
+    AT_DISPATCH_FLOATING_TYPES_AND2(torch::ScalarType::Half, torch::ScalarType::BFloat16, points.scalar_type(), "iterative_3d_warp_backward_cuda", [&] {
+        iterative_3d_warp_backward_kernel<scalar_t><<<blocks, threads>>>(
+            grad_output.data_ptr<scalar_t>(),
+            points.data_ptr<scalar_t>(),
+            flow_fields.data_ptr<scalar_t>(),
+            warped_points.data_ptr<scalar_t>(),
+            grad_points.data_ptr<scalar_t>(),
+            grad_flow_fields.data_ptr<scalar_t>(),
+            batch_size, num_points, num_flow_fields, num_z, num_warps, height, width);
+    });
 
     return {grad_points, grad_flow_fields};
 }

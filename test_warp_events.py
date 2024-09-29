@@ -6,7 +6,7 @@ from cuda_3d_ops import iterative_3d_warp_cuda, trilinear_splat_cuda
 from test_3d_warp import visualize_tensor
 
 
-def iterative_3d_warp_torch(events, flows, base, mode="bilinear"):
+def iterative_3d_warp_torch(events, flows, base, keep_warping, mode="bilinear"):
     """
     Iteratively warps events in 3D using flow fields and bilinear/trilinear interpolation.
 
@@ -233,7 +233,7 @@ if __name__ == "__main__":
 
         warp_fn, splat_fn = functions
 
-        warped_events = warp_fn(events, flows, d)  # no mode trilinear yet for cuda
+        warped_events = warp_fn(events, flows, d, True)  # no mode trilinear yet for cuda
         print(f"Original events with shape {tuple(events.shape)}:\n{events}\n")
         print(f"Warped events ({name}) with shape {tuple(warped_events.shape)}:\n{warped_events}\n")
 

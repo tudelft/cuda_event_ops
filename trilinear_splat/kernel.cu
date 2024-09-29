@@ -1,3 +1,5 @@
+#include <ATen/ATen.h>
+#include <ATen/native/cuda/KernelUtils.cuh>
 #include <torch/extension.h>
 
 
@@ -6,9 +8,10 @@
         i += blockDim.x * gridDim.x)
 
 
+template <typename scalar_t>
 __global__ void trilinear_splat_kernel(
-    const torch::PackedTensorAccessor32<float,3,torch::RestrictPtrTraits> points,
-    torch::PackedTensorAccessor32<float,4,torch::RestrictPtrTraits> grid,
+    const torch::PackedTensorAccessor32<scalar_t,3,torch::RestrictPtrTraits> points,
+    torch::PackedTensorAccessor32<scalar_t,4,torch::RestrictPtrTraits> grid,
     int batch_size, int num_points, int grid_d, int grid_h, int grid_w) {
   
     // one thread can handle multiple points
@@ -19,10 +22,10 @@ __global__ void trilinear_splat_kernel(
         int pi = index % num_points;
 
         // get point
-        float x = points[bi][pi][0];
-        float y = points[bi][pi][1];
-        float z = points[bi][pi][2];
-        float val = points[bi][pi][3];
+        scalar_t x = points[bi][pi][0];
+        scalar_t y = points[bi][pi][1];
+        scalar_t z = points[bi][pi][2];
+        scalar_t val = points[bi][pi][3];
 
         // skip if value is zero
         if (val == 0) continue;
@@ -31,9 +34,9 @@ __global__ void trilinear_splat_kernel(
         int x0 = floor(x), y0 = floor(y), z0 = floor(z);
         int x1 = x0 + 1, y1 = y0 + 1, z1 = z0 + 1;
 
-        float dx = x - x0, dy = y - y0, dz = z - z0;
-        float wx0 = 1 - dx, wy0 = 1 - dy, wz0 = 1 - dz;
-        float wx1 = dx, wy1 = dy, wz1 = dz;
+        scalar_t dx = x - x0, dy = y - y0, dz = z - z0;
+        scalar_t wx0 = 1 - dx, wy0 = 1 - dy, wz0 = 1 - dz;
+        scalar_t wx1 = dx, wy1 = dy, wz1 = dz;
 
         // zero weights give incorrect gradient perception for integer coordinates
         // wx0 = fmax(wx0, 1e-8);
@@ -44,38 +47,40 @@ __global__ void trilinear_splat_kernel(
         // wz1 = fmax(wz1, 1e-8);
 
         // add value if corner inside grid
+        int numel = grid_d * grid_h * grid_w;
         if (x0 >= 0 && y0 >= 0 && z0 >= 0 && x0 < grid_w && y0 < grid_h && z0 < grid_d) {
-            atomicAdd(&grid[bi][z0][y0][x0], val * wx0 * wy0 * wz0);
+            at::native::fastAtomicAdd(grid.data(), bi * numel + z0 * grid_h * grid_w + y0 * grid_w + x0, numel, val * wx0 * wy0 * wz0, true);
         }
         if (x1 >= 0 && y0 >= 0 && z0 >= 0 && x1 < grid_w && y0 < grid_h && z0 < grid_d) {
-            atomicAdd(&grid[bi][z0][y0][x1], val * wx1 * wy0 * wz0);
+            at::native::fastAtomicAdd(grid.data(), bi * numel + z0 * grid_h * grid_w + y0 * grid_w + x1, numel, val * wx1 * wy0 * wz0, true);
         }
         if (x0 >= 0 && y1 >= 0 && z0 >= 0 && x0 < grid_w && y1 < grid_h && z0 < grid_d) {
-            atomicAdd(&grid[bi][z0][y1][x0], val * wx0 * wy1 * wz0);
+            at::native::fastAtomicAdd(grid.data(), bi * numel + z0 * grid_h * grid_w + y1 * grid_w + x0, numel, val * wx0 * wy1 * wz0, true);
         }
         if (x1 >= 0 && y1 >= 0 && z0 >= 0 && x1 < grid_w && y1 < grid_h && z0 < grid_d) {
-            atomicAdd(&grid[bi][z0][y1][x1], val * wx1 * wy1 * wz0);
+            at::native::fastAtomicAdd(grid.data(), bi * numel + z0 * grid_h * grid_w + y1 * grid_w + x1, numel, val * wx1 * wy1 * wz0, true);
         }
         if (x0 >= 0 && y0 >= 0 && z1 >= 0 && x0 < grid_w && y0 < grid_h && z1 < grid_d) {
-            atomicAdd(&grid[bi][z1][y0][x0], val * wx0 * wy0 * wz1);
+            at::native::fastAtomicAdd(grid.data(), bi * numel + z1 * grid_h * grid_w + y0 * grid_w + x0, numel, val * wx0 * wy0 * wz1, true);
         }
         if (x1 >= 0 && y0 >= 0 && z1 >= 0 && x1 < grid_w && y0 < grid_h && z1 < grid_d) {
-            atomicAdd(&grid[bi][z1][y0][x1], val * wx1 * wy0 * wz1);
+            at::native::fastAtomicAdd(grid.data(), bi * numel + z1 * grid_h * grid_w + y0 * grid_w + x1, numel, val * wx1 * wy0 * wz1, true);
         }
         if (x0 >= 0 && y1 >= 0 && z1 >= 0 && x0 < grid_w && y1 < grid_h && z1 < grid_d) {
-            atomicAdd(&grid[bi][z1][y1][x0], val * wx0 * wy1 * wz1);
+            at::native::fastAtomicAdd(grid.data(), bi * numel + z1 * grid_h * grid_w + y1 * grid_w + x0, numel, val * wx0 * wy1 * wz1, true);
         }
         if (x1 >= 0 && y1 >= 0 && z1 >= 0 && x1 < grid_w && y1 < grid_h && z1 < grid_d) {
-            atomicAdd(&grid[bi][z1][y1][x1], val * wx1 * wy1 * wz1);
+            at::native::fastAtomicAdd(grid.data(), bi * numel + z1 * grid_h * grid_w + y1 * grid_w + x1, numel, val * wx1 * wy1 * wz1, true);
         }
     }
 }
 
 
+template <typename scalar_t>
 __global__ void trilinear_splat_backward_kernel(
-    const torch::PackedTensorAccessor32<float,4,torch::RestrictPtrTraits> grad_output,
-    const torch::PackedTensorAccessor32<float,3,torch::RestrictPtrTraits> points,
-    torch::PackedTensorAccessor32<float,3,torch::RestrictPtrTraits> grad_points,
+    const torch::PackedTensorAccessor32<scalar_t,4,torch::RestrictPtrTraits> grad_output,
+    const torch::PackedTensorAccessor32<scalar_t,3,torch::RestrictPtrTraits> points,
+    torch::PackedTensorAccessor32<scalar_t,3,torch::RestrictPtrTraits> grad_points,
     int batch_size, int num_points, int grid_d, int grid_h, int grid_w) {
   
     // one thread can handle multiple points
@@ -86,10 +91,10 @@ __global__ void trilinear_splat_backward_kernel(
         int pi = index % num_points;
 
         // get point
-        float x = points[bi][pi][0];
-        float y = points[bi][pi][1];
-        float z = points[bi][pi][2];
-        float val = points[bi][pi][3];
+        scalar_t x = points[bi][pi][0];
+        scalar_t y = points[bi][pi][1];
+        scalar_t z = points[bi][pi][2];
+        scalar_t val = points[bi][pi][3];
 
         // skip if value is zero
         if (val == 0) continue;
@@ -98,43 +103,44 @@ __global__ void trilinear_splat_backward_kernel(
         int x0 = floor(x), y0 = floor(y), z0 = floor(z);
         int x1 = x0 + 1, y1 = y0 + 1, z1 = z0 + 1;
 
-        float dx = x - x0, dy = y - y0, dz = z - z0;
-        float wx0 = 1 - dx, wy0 = 1 - dy, wz0 = 1 - dz;
-        float wx1 = dx, wy1 = dy, wz1 = dz;
+        scalar_t dx = x - x0, dy = y - y0, dz = z - z0;
+        scalar_t wx0 = 1 - dx, wy0 = 1 - dy, wz0 = 1 - dz;
+        scalar_t wx1 = dx, wy1 = dy, wz1 = dz;
 
         // add x and y gradients if corner was inside
         // TODO: better to have atomicAdds for every if or one at the end?
+        int numel = batch_size * num_points * 4;
         if (x0 >= 0 && y0 >= 0 && z0 >= 0 && x0 < grid_w && y0 < grid_h && z0 < grid_d) {
-            atomicAdd(&grad_points[bi][pi][0], -grad_output[bi][z0][y0][x0] * wy0 * wz0 * val);
-            atomicAdd(&grad_points[bi][pi][1], -grad_output[bi][z0][y0][x0] * wx0 * wz0 * val);
+            at::native::fastAtomicAdd(grad_points.data(), bi * numel + pi * 4 + 0, numel, -grad_output[bi][z0][y0][x0] * wy0 * wz0 * val, true);
+            at::native::fastAtomicAdd(grad_points.data(), bi * numel + pi * 4 + 1, numel, -grad_output[bi][z0][y0][x0] * wx0 * wz0 * val, true);
         }
         if (x1 >= 0 && y0 >= 0 && z0 >= 0 && x1 < grid_w && y0 < grid_h && z0 < grid_d) {
-            atomicAdd(&grad_points[bi][pi][0], grad_output[bi][z0][y0][x1] * wy0 * wz0 * val);
-            atomicAdd(&grad_points[bi][pi][1], -grad_output[bi][z0][y0][x1] * wx1 * wz0 * val);
+            at::native::fastAtomicAdd(grad_points.data(), bi * numel + pi * 4 + 0, numel, grad_output[bi][z0][y0][x1] * wy0 * wz0 * val, true);
+            at::native::fastAtomicAdd(grad_points.data(), bi * numel + pi * 4 + 1, numel, -grad_output[bi][z0][y0][x1] * wx1 * wz0 * val, true);
         }
         if (x0 >= 0 && y1 >= 0 && z0 >= 0 && x0 < grid_w && y1 < grid_h && z0 < grid_d) {
-            atomicAdd(&grad_points[bi][pi][0], -grad_output[bi][z0][y1][x0] * wy1 * wz0 * val);
-            atomicAdd(&grad_points[bi][pi][1], grad_output[bi][z0][y1][x0] * wx0 * wz0 * val);
+            at::native::fastAtomicAdd(grad_points.data(), bi * numel + pi * 4 + 0, numel, -grad_output[bi][z0][y1][x0] * wy1 * wz0 * val, true);
+            at::native::fastAtomicAdd(grad_points.data(), bi * numel + pi * 4 + 1, numel, grad_output[bi][z0][y1][x0] * wx0 * wz0 * val, true);
         }
         if (x1 >= 0 && y1 >= 0 && z0 >= 0 && x1 < grid_w && y1 < grid_h && z0 < grid_d) {
-            atomicAdd(&grad_points[bi][pi][0], grad_output[bi][z0][y1][x1] * wy1 * wz0 * val);
-            atomicAdd(&grad_points[bi][pi][1], grad_output[bi][z0][y1][x1] * wx1 * wz0 * val);
+            at::native::fastAtomicAdd(grad_points.data(), bi * numel + pi * 4 + 0, numel, grad_output[bi][z0][y1][x1] * wy1 * wz0 * val, true);
+            at::native::fastAtomicAdd(grad_points.data(), bi * numel + pi * 4 + 1, numel, grad_output[bi][z0][y1][x1] * wx1 * wz0 * val, true);
         }
         if (x0 >= 0 && y0 >= 0 && z1 >= 0 && x0 < grid_w && y0 < grid_h && z1 < grid_d) {
-            atomicAdd(&grad_points[bi][pi][0], -grad_output[bi][z1][y0][x0] * wy0 * wz1 * val);
-            atomicAdd(&grad_points[bi][pi][1], -grad_output[bi][z1][y0][x0] * wx0 * wz1 * val);
+            at::native::fastAtomicAdd(grad_points.data(), bi * numel + pi * 4 + 0, numel, -grad_output[bi][z1][y0][x0] * wy0 * wz1 * val, true);
+            at::native::fastAtomicAdd(grad_points.data(), bi * numel + pi * 4 + 1, numel, -grad_output[bi][z1][y0][x0] * wx0 * wz1 * val, true);
         }
         if (x1 >= 0 && y0 >= 0 && z1 >= 0 && x1 < grid_w && y0 < grid_h && z1 < grid_d) {
-            atomicAdd(&grad_points[bi][pi][0], grad_output[bi][z1][y0][x1] * wy0 * wz1 * val);
-            atomicAdd(&grad_points[bi][pi][1], -grad_output[bi][z1][y0][x1] * wx1 * wz1 * val);
+            at::native::fastAtomicAdd(grad_points.data(), bi * numel + pi * 4 + 0, numel, grad_output[bi][z1][y0][x1] * wy0 * wz1 * val, true);
+            at::native::fastAtomicAdd(grad_points.data(), bi * numel + pi * 4 + 1, numel, -grad_output[bi][z1][y0][x1] * wx1 * wz1 * val, true);
         }
         if (x0 >= 0 && y1 >= 0 && z1 >= 0 && x0 < grid_w && y1 < grid_h && z1 < grid_d) {
-            atomicAdd(&grad_points[bi][pi][0], -grad_output[bi][z1][y1][x0] * wy1 * wz1 * val);
-            atomicAdd(&grad_points[bi][pi][1], grad_output[bi][z1][y1][x0] * wx0 * wz1 * val);
+            at::native::fastAtomicAdd(grad_points.data(), bi * numel + pi * 4 + 0, numel, -grad_output[bi][z1][y1][x0] * wy1 * wz1 * val, true);
+            at::native::fastAtomicAdd(grad_points.data(), bi * numel + pi * 4 + 1, numel, grad_output[bi][z1][y1][x0] * wx0 * wz1 * val, true);
         }
         if (x1 >= 0 && y1 >= 0 && z1 >= 0 && x1 < grid_w && y1 < grid_h && z1 < grid_d) {
-            atomicAdd(&grad_points[bi][pi][0], grad_output[bi][z1][y1][x1] * wy1 * wz1 * val);
-            atomicAdd(&grad_points[bi][pi][1], grad_output[bi][z1][y1][x1] * wx1 * wz1 * val);
+            at::native::fastAtomicAdd(grad_points.data(), bi * numel + pi * 4 + 0, numel, grad_output[bi][z1][y1][x1] * wy1 * wz1 * val, true);
+            at::native::fastAtomicAdd(grad_points.data(), bi * numel + pi * 4 + 1, numel, grad_output[bi][z1][y1][x1] * wx1 * wz1 * val, true);
         }
     }
 }
@@ -151,10 +157,12 @@ torch::Tensor trilinear_splat_cuda(
     // one or multiple points per thread
     const int blocks = (batch_size * num_points + threads - 1) / threads / points_per_thread;
     
-    trilinear_splat_kernel<<<blocks, threads>>>(
-        points.packed_accessor32<float,3,torch::RestrictPtrTraits>(),
-        grid.packed_accessor32<float,4,torch::RestrictPtrTraits>(),
-        batch_size, num_points, grid_d, grid_h, grid_w);
+    AT_DISPATCH_FLOATING_TYPES_AND2(torch::ScalarType::Half, torch::ScalarType::BFloat16, points.scalar_type(), "trilinear_splat_cuda", [&] {
+        trilinear_splat_kernel<scalar_t><<<blocks, threads>>>(
+            points.packed_accessor32<scalar_t,3,torch::RestrictPtrTraits>(),
+            grid.packed_accessor32<scalar_t,4,torch::RestrictPtrTraits>(),
+            batch_size, num_points, grid_d, grid_h, grid_w);
+    });
 
     return grid;
 }
@@ -173,11 +181,13 @@ torch::Tensor trilinear_splat_backward_cuda(
     // one or multiple points per thread
     const int blocks = (batch_size * num_points + threads - 1) / threads / points_per_thread;
     
-    trilinear_splat_backward_kernel<<<blocks, threads>>>(
-        grad_output.packed_accessor32<float,4,torch::RestrictPtrTraits>(),
-        points.packed_accessor32<float,3,torch::RestrictPtrTraits>(),
-        grad_points.packed_accessor32<float,3,torch::RestrictPtrTraits>(),
-        batch_size, num_points, grid_d, grid_h, grid_w);
+    AT_DISPATCH_FLOATING_TYPES_AND2(torch::ScalarType::Half, torch::ScalarType::BFloat16, points.scalar_type(), "trilinear_splat_backward_cuda", [&] {
+        trilinear_splat_backward_kernel<scalar_t><<<blocks, threads>>>(
+            grad_output.packed_accessor32<scalar_t,4,torch::RestrictPtrTraits>(),
+            points.packed_accessor32<scalar_t,3,torch::RestrictPtrTraits>(),
+            grad_points.packed_accessor32<scalar_t,3,torch::RestrictPtrTraits>(),
+            batch_size, num_points, grid_d, grid_h, grid_w);
+    });
 
     return grad_points;
 }
