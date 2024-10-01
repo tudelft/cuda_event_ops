@@ -1,7 +1,6 @@
 #include <ATen/ATen.h>
 #include <ATen/native/cuda/KernelUtils.cuh>
 #include <torch/extension.h>
-#include <vector>
 
 
 #define CUDA_KERNEL_LOOP(i, n) \
@@ -182,7 +181,7 @@ __global__ void iterative_3d_warp_backward_kernel(
     const scalar_t* __restrict__ points, 
     const scalar_t* __restrict__ flow_fields,
     const scalar_t* __restrict__ warped_points,
-    scalar_t* __restrict__ grad_points,
+    const scalar_t* __restrict__ backprop_point,
     scalar_t* __restrict__ grad_flow_fields,
     int batch_size, int num_points, int num_flow_fields, int num_z, int num_warps, int height, int width) {
 
@@ -192,6 +191,9 @@ __global__ void iterative_3d_warp_backward_kernel(
         // indices
         int batch_idx = idx / num_points;
         int point_idx = idx % num_points;
+
+        // only backprop 50% of points
+        if (backprop_point[batch_idx * num_points + point_idx] < 0.5f) return;
 
         // load starting z
         scalar_t z_orig = points[batch_idx * num_points * 5 + point_idx * 5 + 2];
@@ -415,7 +417,7 @@ torch::Tensor iterative_3d_warp_cuda(
 }
 
 
-std::vector<torch::Tensor> iterative_3d_warp_backward_cuda(
+torch::Tensor iterative_3d_warp_backward_cuda(
     torch::Tensor grad_output,
     torch::Tensor points,
     torch::Tensor flow_fields,
@@ -429,7 +431,7 @@ std::vector<torch::Tensor> iterative_3d_warp_backward_cuda(
     int height = flow_fields.size(2);
     int width = flow_fields.size(3);
 
-    auto grad_points = torch::zeros_like(points);
+    auto backprop_point = torch::rand_like(points);
     auto grad_flow_fields = torch::zeros_like(flow_fields);
 
     // one or multiple points per thread
@@ -441,10 +443,10 @@ std::vector<torch::Tensor> iterative_3d_warp_backward_cuda(
             points.data_ptr<scalar_t>(),
             flow_fields.data_ptr<scalar_t>(),
             warped_points.data_ptr<scalar_t>(),
-            grad_points.data_ptr<scalar_t>(),
+            backprop_point.data_ptr<scalar_t>(),
             grad_flow_fields.data_ptr<scalar_t>(),
             batch_size, num_points, num_flow_fields, num_z, num_warps, height, width);
     });
 
-    return {grad_points, grad_flow_fields};
+    return grad_flow_fields;
 }

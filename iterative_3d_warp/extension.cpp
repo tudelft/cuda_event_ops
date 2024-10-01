@@ -1,5 +1,4 @@
 #include <torch/extension.h>
-#include <vector>
 
 
 // cuda forward declarations
@@ -9,7 +8,7 @@ torch::Tensor iterative_3d_warp_cuda(
     int num_warps, bool keep_warping, int threads, int points_per_thread);
 
 
-std::vector<torch::Tensor> iterative_3d_warp_backward_cuda(
+torch::Tensor iterative_3d_warp_backward_cuda(
     torch::Tensor grad_output,
     torch::Tensor points,
     torch::Tensor flow_fields,
@@ -35,7 +34,7 @@ torch::Tensor iterative_3d_warp_forward(
 }
 
 
-std::vector<torch::Tensor> iterative_3d_warp_backward(
+torch::Tensor iterative_3d_warp_backward(
     torch::Tensor grad_output,
     torch::Tensor points,
     torch::Tensor flow_fields,

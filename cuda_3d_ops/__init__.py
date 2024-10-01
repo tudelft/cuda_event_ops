@@ -17,10 +17,10 @@ class Iterative3DWarpCuda(torch.autograd.Function):
     def backward(ctx, grad_output):
         points, flow_fields, warped_points = ctx.saved_tensors
         num_warps, threads, points_per_thread = ctx.num_warps, ctx.threads, ctx.points_per_thread
-        grad_points, grad_flow_fields = iterative_3d_warp_backward(
+        grad_flow_fields = iterative_3d_warp_backward(
             grad_output.contiguous(), points, flow_fields, warped_points, num_warps, threads, points_per_thread
         )
-        return grad_points, grad_flow_fields, None, None, None, None
+        return None, grad_flow_fields, None, None, None, None
 
 
 def iterative_3d_warp_cuda(points, flow_fields, num_warps, keep_warping, threads=1024, points_per_thread=1):
