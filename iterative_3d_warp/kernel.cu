@@ -235,18 +235,44 @@ __global__ void iterative_3d_warp_backward_kernel(
             grad_warped_point_x += grad_output[output_idx];
             grad_warped_point_y += grad_output[output_idx + 1];
 
+            // pre-compute to be added value to avoid expensive atomicAdd if zero
+            scalar_t val_x00 = grad_warped_point_x * w00 * dz;
+            scalar_t val_x01 = grad_warped_point_x * w01 * dz;
+            scalar_t val_x10 = grad_warped_point_x * w10 * dz;
+            scalar_t val_x11 = grad_warped_point_x * w11 * dz;
+            scalar_t val_y00 = grad_warped_point_y * w00 * dz;
+            scalar_t val_y01 = grad_warped_point_y * w01 * dz;
+            scalar_t val_y10 = grad_warped_point_y * w10 * dz;
+            scalar_t val_y11 = grad_warped_point_y * w11 * dz;
+
             // add grads wrt x flow
             int numel = batch_size * num_flow_fields * height * width * 2;
-            at::native::fastAtomicAdd(grad_flow_fields, batch_idx * num_flow_fields * height * width * 2 + (z_next - 1) * height * width * 2 + (y0 * width + x0) * 2, numel, grad_warped_point_x * w00 * dz, true);
-            at::native::fastAtomicAdd(grad_flow_fields, batch_idx * num_flow_fields * height * width * 2 + (z_next - 1) * height * width * 2 + (y0 * width + x1) * 2, numel, grad_warped_point_x * w01 * dz, true);
-            at::native::fastAtomicAdd(grad_flow_fields, batch_idx * num_flow_fields * height * width * 2 + (z_next - 1) * height * width * 2 + (y1 * width + x0) * 2, numel, grad_warped_point_x * w10 * dz, true);
-            at::native::fastAtomicAdd(grad_flow_fields, batch_idx * num_flow_fields * height * width * 2 + (z_next - 1) * height * width * 2 + (y1 * width + x1) * 2, numel, grad_warped_point_x * w11 * dz, true);
+            if (val_x00 != 0.0f) {
+                at::native::fastAtomicAdd(grad_flow_fields, batch_idx * num_flow_fields * height * width * 2 + (z_next - 1) * height * width * 2 + (y0 * width + x0) * 2, numel, val_x00, true);
+            }
+            if (val_x01 != 0.0f) {
+                at::native::fastAtomicAdd(grad_flow_fields, batch_idx * num_flow_fields * height * width * 2 + (z_next - 1) * height * width * 2 + (y0 * width + x1) * 2, numel, val_x01, true);
+            }
+            if (val_x10 != 0.0f) {
+                at::native::fastAtomicAdd(grad_flow_fields, batch_idx * num_flow_fields * height * width * 2 + (z_next - 1) * height * width * 2 + (y1 * width + x0) * 2, numel, val_x10, true);
+            }
+            if (val_x11 != 0.0f) {
+                at::native::fastAtomicAdd(grad_flow_fields, batch_idx * num_flow_fields * height * width * 2 + (z_next - 1) * height * width * 2 + (y1 * width + x1) * 2, numel, val_x11, true);
+            }
             
             // add grads wrt y flow
-            at::native::fastAtomicAdd(grad_flow_fields, batch_idx * num_flow_fields * height * width * 2 + (z_next - 1) * height * width * 2 + (y0 * width + x0) * 2 + 1, numel, grad_warped_point_y * w00 * dz, true);
-            at::native::fastAtomicAdd(grad_flow_fields, batch_idx * num_flow_fields * height * width * 2 + (z_next - 1) * height * width * 2 + (y0 * width + x1) * 2 + 1, numel, grad_warped_point_y * w01 * dz, true);
-            at::native::fastAtomicAdd(grad_flow_fields, batch_idx * num_flow_fields * height * width * 2 + (z_next - 1) * height * width * 2 + (y1 * width + x0) * 2 + 1, numel, grad_warped_point_y * w10 * dz, true);
-            at::native::fastAtomicAdd(grad_flow_fields, batch_idx * num_flow_fields * height * width * 2 + (z_next - 1) * height * width * 2 + (y1 * width + x1) * 2 + 1, numel, grad_warped_point_y * w11 * dz, true);
+            if (val_y00 != 0.0f) {
+                at::native::fastAtomicAdd(grad_flow_fields, batch_idx * num_flow_fields * height * width * 2 + (z_next - 1) * height * width * 2 + (y0 * width + x0) * 2 + 1, numel, val_y00, true);
+            }
+            if (val_y01 != 0.0f) {
+                at::native::fastAtomicAdd(grad_flow_fields, batch_idx * num_flow_fields * height * width * 2 + (z_next - 1) * height * width * 2 + (y0 * width + x1) * 2 + 1, numel, val_y01, true);
+            }
+            if (val_y10 != 0.0f) {
+                at::native::fastAtomicAdd(grad_flow_fields, batch_idx * num_flow_fields * height * width * 2 + (z_next - 1) * height * width * 2 + (y1 * width + x0) * 2 + 1, numel, val_y10, true);
+            }
+            if (val_y11 != 0.0f) {
+                at::native::fastAtomicAdd(grad_flow_fields, batch_idx * num_flow_fields * height * width * 2 + (z_next - 1) * height * width * 2 + (y1 * width + x1) * 2 + 1, numel, val_y11, true);
+            }
 
             // calculate grad wrt xy
             // changes in flow field
