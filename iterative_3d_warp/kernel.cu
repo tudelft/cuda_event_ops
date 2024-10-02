@@ -193,7 +193,7 @@ __global__ void iterative_3d_warp_backward_kernel(
         int point_idx = idx % num_points;
 
         // only backprop 50% of points
-        if (backprop_point[batch_idx * num_points + point_idx] < 0.9f) return;
+        if (backprop_point[batch_idx * num_points + point_idx] < 0.5f) return;
 
         // load starting z
         scalar_t z_orig = points[batch_idx * num_points * 5 + point_idx * 5 + 2];
