@@ -182,8 +182,9 @@ __global__ void iterative_3d_warp_backward_kernel(
     const scalar_t* __restrict__ flow_fields,
     const scalar_t* __restrict__ warped_points,
     const scalar_t* __restrict__ backprop_point,
+    // const bool* __restrict__ backprop_point,
     scalar_t* __restrict__ grad_flow_fields,
-    int batch_size, int num_points, int num_flow_fields, int num_z, int num_warps, int height, int width) {
+    int batch_size, int num_points, int num_flow_fields, int num_z, int num_warps, int height, int width, float bp_frac) {
 
     // one thread can handle multiple points
     // useful when points >> threads
@@ -192,8 +193,9 @@ __global__ void iterative_3d_warp_backward_kernel(
         int batch_idx = idx / num_points;
         int point_idx = idx % num_points;
 
-        // only backprop 50% of points
-        if (backprop_point[batch_idx * num_points + point_idx] < 0.5f) return;
+        // only backprop fraction/number of points
+        if (backprop_point[batch_idx * num_points + point_idx] < bp_frac) return;
+        // if (!backprop_point[batch_idx * num_points + point_idx]) return;
 
         // load starting z
         scalar_t z_orig = points[batch_idx * num_points * 5 + point_idx * 5 + 2];
@@ -422,7 +424,8 @@ torch::Tensor iterative_3d_warp_backward_cuda(
     torch::Tensor points,
     torch::Tensor flow_fields,
     torch::Tensor warped_points,
-    int num_warps, int threads, int points_per_thread) {
+    int num_warps, float bp_frac, int threads, int points_per_thread) {
+    // int num_warps, int bp_points, int threads, int points_per_thread) {
 
     int batch_size = points.size(0);
     int num_points = points.size(1);
@@ -430,6 +433,13 @@ torch::Tensor iterative_3d_warp_backward_cuda(
     int num_z = num_flow_fields + 1;
     int height = flow_fields.size(2);
     int width = flow_fields.size(3);
+
+    // generate bool tensor with set number of points to backprop per batch
+    // auto sample = torch::rand_like(points);
+    // auto topk_result = torch::topk(sample, bp_points, /*dim=*/1);
+    // auto top_indices = std::get<1>(topk_result);
+    // auto backprop_point = torch::zeros({batch_size, num_points}, torch::kBool);
+    // backprop_point.scatter_(1, top_indices, true);
 
     auto backprop_point = torch::rand_like(points);
     auto grad_flow_fields = torch::zeros_like(flow_fields);
@@ -444,8 +454,9 @@ torch::Tensor iterative_3d_warp_backward_cuda(
             flow_fields.data_ptr<scalar_t>(),
             warped_points.data_ptr<scalar_t>(),
             backprop_point.data_ptr<scalar_t>(),
+            // backprop_point.data_ptr<bool>(),
             grad_flow_fields.data_ptr<scalar_t>(),
-            batch_size, num_points, num_flow_fields, num_z, num_warps, height, width);
+            batch_size, num_points, num_flow_fields, num_z, num_warps, height, width, bp_frac);
     });
 
     return grad_flow_fields;

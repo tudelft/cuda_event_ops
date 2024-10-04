@@ -22,3 +22,4 @@ pip install git+ssh://git@github.com/Huizerd/cuda_3d_ops
 - [x] Check best approach to threads: one per point? Or independent of points?
 - [ ] Use accessors to make CUDA code more readable
 - [ ] Beautify code generally
+- [ ] Backprop only fraction of events -> backprop only number of events
