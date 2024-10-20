@@ -219,7 +219,7 @@ if __name__ == "__main__":
         # n = 1
         n = 100
         # b, d, h, w = 1, 4, 6, 6
-        b, d, h, w = 1, 3, 5, 5
+        b, d, h, w = 3, 3, 5, 5
         # events = torch.tensor([[[1.0, 1.0, 3.0, 2, 1.0]]], device="cuda")  # (b, n, 5): x, y, z, zi, val
         events = torch.rand((b, n, 5), device="cuda", dtype=dtype) * torch.tensor([w - 1, h - 1, d, d - 1, 1.0], device="cuda", dtype=dtype)
         events[..., 3] = events[..., 2].floor()

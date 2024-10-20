@@ -186,8 +186,8 @@ __global__ void trilinear_splat_backward_kernel(
 
         // do atomic adds
         int numel = batch_size * num_points * 4;
-        at::native::fastAtomicAdd(grad_points.data(), bi * numel + pi * 4 + 0, numel, grad_x, true);
-        at::native::fastAtomicAdd(grad_points.data(), bi * numel + pi * 4 + 1, numel, grad_y, true);
+        at::native::fastAtomicAdd(grad_points.data(), bi * num_points * 4 + pi * 4 + 0, numel, grad_x, true);
+        at::native::fastAtomicAdd(grad_points.data(), bi * num_points * 4 + pi * 4 + 1, numel, grad_y, true);
     }
 }
 
