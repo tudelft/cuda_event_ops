@@ -227,8 +227,8 @@ if __name__ == "__main__":
         # flows[0, 1, 1, 1, 0] = 1
         # flows[0, 2, 1, 2, 0] = 1
         # flows[0, 3, 1, 3, 0] = 1
-        flow_mag = torch.tensor([0.5, 0.0], device="cuda", dtype=dtype)
-        flows = torch.rand((b, 1, h, w, 2), device="cuda", dtype=dtype).repeat(1, d, 1, 1, 1) * flow_mag
+        # flow_mag = torch.tensor([0.5, 0.0], device="cuda", dtype=dtype)
+        flows = torch.rand((b, d, h, w, 2), device="cuda", dtype=dtype)
         flows.requires_grad = True
         visualize_tensor(flows[..., 0].detach(), title=f"x flow field {name}", folder="figures/test_warp_events")
 
