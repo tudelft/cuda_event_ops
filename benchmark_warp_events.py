@@ -107,12 +107,10 @@ def iterative_3d_warp_torch_batch(events, flows, base):
 
     # repeat for simultaneous fw and bw warping
     events = events.repeat(2, 1, 1, 1)  # copies
-    ts_orig = events[..., 0:1, :].clone()
 
     # lists to store warped events, ts and inside mask
     # we need to know where they came from + where they're going
     warped_events = [[None for _ in range(d)] for _ in range(d + 1)]
-    warped_ts = [[None for _ in range(d)] for _ in range(d + 1)]
     warped_mask_inside = [None for _ in range(d)]
 
     # warping stages
@@ -129,7 +127,6 @@ def iterative_3d_warp_torch_batch(events, flows, base):
         # advanced indexing copies
         select_events = events[t_events]
         select_flow = flows[t_flow]
-        select_ts = ts_orig[t_events]
 
         # sample flow that will warp events at event locations
         # ensure integer t because we don't want bilinear there
@@ -152,7 +149,6 @@ def iterative_3d_warp_torch_batch(events, flows, base):
         # also take into account mask outside base
         for j, (src, dst) in enumerate(zip([*t0, *t1], t_ref)):
             warped_events[dst][src] = select_events[j : j + 1] if i < base else None
-            warped_ts[dst][src] = select_ts[j : j + 1] if i < base else None
             warped_mask_inside[src] = (
                 warped_mask_inside[src] * mask_inside[j : j + 1]
                 if warped_mask_inside[src] is not None
@@ -164,7 +160,6 @@ def iterative_3d_warp_torch_batch(events, flows, base):
     # events that go out anywhere are masked everywhere
     for i in range(d + 1):
         warped_events[i] = torch.cat([e * m for e, m in zip(warped_events[i], warped_mask_inside) if e is not None])
-        warped_ts[i] = torch.cat([t for t in warped_ts[i] if t is not None])
     
     return torch.stack(warped_events)
 
@@ -271,6 +266,91 @@ def bilinear_splat_torch_batch(events, grid_resolution):
         # iwe
         values = events[i][..., 3:4, :].repeat(1, 1, 1, 4)  # repeat for corners
         iwe[i] += accumulate_to_image(corners, weights * values, torch.ones_like(weights), resolution).sum(0)
+
+    return iwe
+
+
+def iterative_3d_warp_bilinear_splat_torch_combined(events, flow, base):
+    """
+    Args:
+        events: (d, b, 4, n) tensor of events with (ts, y, x, p) in -2 dim.
+        flow: (d, b, 2, h, w) tensor of (y, x) flow maps.
+        base: int of number of neighboring bins (one-sided) to consider for each reference time.
+
+    Returns:
+        (d + 1, b, 1, h, w) tensor of images of warped events.
+    """
+
+    # get deblurring window and resolution
+    d, _, _, h, w = flow.shape
+    resolution = torch.tensor([h, w], device=flows.device)
+
+    # repeat for simultaneous fw and bw warping
+    events = events.repeat(2, 1, 1, 1)  # copies
+
+    # iwe and iwt at each reference time
+    iwe = torch.zeros(d + 1, b, 1, h, w, dtype=events.dtype, device=events.device)
+
+    # warping stages
+    for i in range(d):
+        # bin indices to take events/flow from (fw, bw warp)
+        # we keep bin position when warping (only change index of events)
+        t0 = torch.arange(d - i, device=events.device)
+        t1 = torch.arange(i, d, device=events.device)
+        t_events = torch.cat([t0, t1 + d])
+        t_flow = torch.cat([t1, t0])
+        t_ref = torch.cat([t1 + 1, t0])
+
+        # if in base: warp events
+        # if base < d we don't get good iwes at 0 and end for this
+        if i < base:
+            # select events, flow and original timestamps (for scaling)
+            # advanced indexing copies
+            select_events = events[t_events]
+            select_flow = flow[t_flow]
+
+            # sample flow that will warp events at event locations
+            # ensure integer t because we don't want bilinear there
+            # (is a concat of fw/bw, not chronological)
+            select_event_flow = get_event_flow_3d(select_events, select_flow)
+
+            # fw/bw warp events to reference time
+            # overwrite ts with reference time
+            # all in-place
+            select_events = linear_warp(select_events, select_event_flow, t_ref.view(-1, 1, 1, 1), keep_ts=False)
+
+            # discard events warped outside image
+            mask_inside = compute_inside_mask(select_events[..., 1:3, :], resolution)
+            select_events[..., 1:4, :] *= mask_inside  # mask idx and p, can be done in-place
+
+            # save warped events, no copy here
+            events[t_events] = select_events
+
+            # put warped events in iwe
+
+            # inverse product of l1 distances to closest pixels
+            corners, weights = inv_l1_dist_prod(select_events[..., 1:3, :])
+
+            # discard corners outside image
+            mask_inside = compute_inside_mask(corners, resolution)
+            corners = corners * mask_inside
+            weights = weights * mask_inside
+
+            # accumulate to images
+            # done in two steps because else no summing due to duplicate indices
+            # neg and pos cannot be merged because of 0 polarity due to padding
+            t_ref_fw = i + 1
+            t_ref_bw = d - i
+
+            # split into fw and bw views
+            corners_fw, corners_bw = corners.chunk(2)
+            weights_fw, weights_bw = weights.chunk(2)
+
+            # iwe
+            values = select_events[..., 3:4, :].repeat(1, 1, 1, 4)  # repeat for corners
+            values_fw, values_bw = values.chunk(2)
+            iwe[t_ref_fw:] += accumulate_to_image(corners_fw, weights_fw * values_fw, torch.ones_like(weights_fw), resolution)
+            iwe[:t_ref_bw] += accumulate_to_image(corners_bw, weights_bw * values_bw, torch.ones_like(weights_bw), resolution)
 
     return iwe
 
@@ -471,7 +551,7 @@ def trilinear_splat_torch(events, grid_resolution):
 """
 TODO:
 - Why quite large grad differences for large number of events? Could be check for inside? <= vs <?
-- Add combined method for torch batch (we have the code anyway)
+- Add combined method for cuda? Small differences for combined torch but maybe worth it
 """
 if __name__ == "__main__":
     # generate events and flows
@@ -565,7 +645,37 @@ if __name__ == "__main__":
         flow_grad = flows.grad.clone()
         # set grad to none
         flows.grad = None
-        del events_p, flows_p
+        return result_time, result_memory, loss_val, flow_grad
+
+    # combined torch
+    # no border compensation
+    def torch_combined_once(events, flows):
+        events_p = events[..., [2, 1, 0, 4]].permute(1, 0, 3, 2).contiguous()
+        flows_p = flows[..., [1, 0]].permute(1, 0, 4, 2, 3).contiguous()
+        torch.cuda.synchronize()
+        m0 = torch.cuda.memory_allocated()
+        torch.cuda.reset_peak_memory_stats()
+        t0 = time.time()
+        # combined warp and splat events to images
+        splatted = iterative_3d_warp_bilinear_splat_torch_combined(events_p, flows_p, d)
+        torch.cuda.synchronize()
+        m1 = torch.cuda.max_memory_allocated()
+        torch.cuda.reset_peak_memory_stats()
+        t1 = time.time()
+        # backward loss
+        loss = splatted.diff(dim=1).abs().sum()
+        loss.backward()
+        torch.cuda.synchronize()
+        m2 = torch.cuda.max_memory_allocated()
+        torch.cuda.reset_peak_memory_stats()
+        t2 = time.time()
+        # store results
+        result_time = DotMap(warp=np.nan, splat=np.nan, backward=np.nan, total=(t2 - t0) * 1000)
+        result_memory = DotMap(warp=np.nan, splat=np.nan, backward=np.nan, total=max(m1 - m0, m2 - m0))
+        loss_val = loss.detach().clone()
+        flow_grad = flows.grad.clone()
+        # set grad to none
+        flows.grad = None
         return result_time, result_memory, loss_val, flow_grad
 
     # cuda
@@ -607,6 +717,7 @@ if __name__ == "__main__":
     methods = {
         "torch_naive": torch_naive_once,
         "torch_batch": torch_batch_once,
+        # "torch_combined": torch_combined_once,  # no border compensation
         "cuda": cuda_once,
     }
 
