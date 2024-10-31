@@ -468,6 +468,11 @@ def trilinear_splat_torch(events, grid_resolution):
     return output
 
 
+"""
+TODO:
+- Why quite large grad differences for large number of events? Could be check for inside? <= vs <?
+- Add combined method for torch batch (we have the code anyway)
+"""
 if __name__ == "__main__":
     # generate events and flows
     torch.manual_seed(0)
@@ -493,6 +498,7 @@ if __name__ == "__main__":
     # naive torch
     def torch_naive_once(events, flows):
         torch.cuda.synchronize()
+        m0 = torch.cuda.memory_allocated()
         torch.cuda.reset_peak_memory_stats()
         t0 = time.time()
         # warp events
@@ -515,19 +521,25 @@ if __name__ == "__main__":
         m3 = torch.cuda.max_memory_allocated()
         torch.cuda.reset_peak_memory_stats()
         t3 = time.time()
+        # store results
+        result_time = DotMap(warp=(t1 - t0) * 1000, splat=(t2 - t1) * 1000, backward=(t3 - t2) * 1000, total=(t3 - t0) * 1000)
+        result_memory = DotMap(warp=m1 - m0, splat=m2 - m0, backward=m3 - m0, total=max(m1 - m0, m2 - m0, m3 - m0))
+        loss_val = loss.detach().clone()
+        flow_grad = flows.grad.clone()
         # set grad to none
         flows.grad = None
-        return DotMap(warp=(t1 - t0) * 1000, splat=(t2 - t1) * 1000, backward=(t3 - t2) * 1000, total=(t3 - t0) * 1000), DotMap(warp=m1, splat=m2, backward=m3, total=max(m1, m2, m3))
+        return result_time, result_memory, loss_val, flow_grad
 
     # batched torch
     def torch_batch_once(events, flows):
-        events = events[..., [2, 1, 0, 4]].permute(1, 0, 3, 2).contiguous()
-        flows = flows[..., [1, 0]].permute(1, 0, 4, 2, 3).contiguous()
+        events_p = events[..., [2, 1, 0, 4]].permute(1, 0, 3, 2).contiguous()
+        flows_p = flows[..., [1, 0]].permute(1, 0, 4, 2, 3).contiguous()
         torch.cuda.synchronize()
+        m0 = torch.cuda.memory_allocated()
         torch.cuda.reset_peak_memory_stats()
         t0 = time.time()
         # warp events
-        warped_events = iterative_3d_warp_torch_batch(events, flows, d)
+        warped_events = iterative_3d_warp_torch_batch(events_p, flows_p, d)
         torch.cuda.synchronize()
         m1 = torch.cuda.max_memory_allocated()
         torch.cuda.reset_peak_memory_stats()
@@ -546,13 +558,20 @@ if __name__ == "__main__":
         m3 = torch.cuda.max_memory_allocated()
         torch.cuda.reset_peak_memory_stats()
         t3 = time.time()
+        # store results
+        result_time = DotMap(warp=(t1 - t0) * 1000, splat=(t2 - t1) * 1000, backward=(t3 - t2) * 1000, total=(t3 - t0) * 1000)
+        result_memory = DotMap(warp=m1 - m0, splat=m2 - m0, backward=m3 - m0, total=max(m1 - m0, m2 - m0, m3 - m0))
+        loss_val = loss.detach().clone()
+        flow_grad = flows.grad.clone()
         # set grad to none
         flows.grad = None
-        return DotMap(warp=(t1 - t0) * 1000, splat=(t2 - t1) * 1000, backward=(t3 - t2) * 1000, total=(t3 - t0) * 1000), DotMap(warp=m1, splat=m2, backward=m3, total=max(m1, m2, m3))
+        del events_p, flows_p
+        return result_time, result_memory, loss_val, flow_grad
 
     # cuda
     def cuda_once(events, flows):
         torch.cuda.synchronize()
+        m0 = torch.cuda.memory_allocated()
         torch.cuda.reset_peak_memory_stats()
         t0 = time.time()
         # warp events
@@ -575,9 +594,14 @@ if __name__ == "__main__":
         m3 = torch.cuda.max_memory_allocated()
         torch.cuda.reset_peak_memory_stats()
         t3 = time.time()
+        # store results
+        result_time = DotMap(warp=(t1 - t0) * 1000, splat=(t2 - t1) * 1000, backward=(t3 - t2) * 1000, total=(t3 - t0) * 1000)
+        result_memory = DotMap(warp=m1 - m0, splat=m2 - m0, backward=m3 - m0, total=max(m1 - m0, m2 - m0, m3 - m0))
+        loss_val = loss.detach().clone()
+        flow_grad = flows.grad.clone()
         # set grad to none
         flows.grad = None
-        return DotMap(warp=(t1 - t0) * 1000, splat=(t2 - t1) * 1000, backward=(t3 - t2) * 1000, total=(t3 - t0) * 1000), DotMap(warp=m1, splat=m2, backward=m3, total=max(m1, m2, m3))
+        return result_time, result_memory, loss_val, flow_grad
 
     # methods
     methods = {
@@ -587,8 +611,7 @@ if __name__ == "__main__":
     }
 
     # benchmark
-    # TODO: check losses and grads equality
-    results_time, results_memory = DotMap(), DotMap()
+    results_time, results_memory, losses, grads = DotMap(), DotMap(), DotMap(), DotMap()
     for name, once in methods.items():
         for n, events, flows in zip(num_events, events_, flows_):
             print(f"Running {name} with {n} events")
@@ -602,12 +625,27 @@ if __name__ == "__main__":
 
             # benchmark
             for i in range(repeats):
-                result_time, result_memory = once(events, flows)
+                result_time, result_memory, loss, grad = once(events, flows)
                 for k, v in result_time.items():
                     results_time[name][k][n] += [v]
                 for k, v in result_memory.items():
                     results_memory[name][k][n] += [v]
-    
+                losses[n] += [loss]
+                grads[n] += [grad]
+
+    # check loss and grad equality
+    for n in num_events:
+        losses_eq, grads_eq = [], []
+        losses_diff, grads_diff = [], []
+        for l0, l1, g0, g1 in zip(losses[n][:-1], losses[n][1:], grads[n][:-1], grads[n][1:]):
+            losses_eq.append(torch.allclose(l0, l1))
+            grads_eq.append(torch.allclose(g0, g1))
+            losses_diff.append(torch.max(torch.abs(l0 - l1)))
+            grads_diff.append(torch.max(torch.abs(g0 - g1)))
+        
+        print(f"Losses all equal for {n} events: {all(losses_eq)}, largest diff: {max(losses_diff)}")
+        print(f"Grads all equal for {n} events: {all(grads_eq)}, largest diff: {max(grads_diff)}")
+
     # plot results
     fig, axs = plt.subplots(2, 4, figsize=(12, 6), sharey="row", sharex="col")
     for name, result in results_time.items():
@@ -636,209 +674,7 @@ if __name__ == "__main__":
             axs[1, i].grid(True)
     axs[0, 0].legend()
     axs[0, 0].set_ylabel("runtime [ms]")
-    axs[1, 0].set_ylabel("peak memory [MB]")
+    axs[1, 0].set_ylabel("peak delta memory [MB]")
     fig.suptitle("Warping and splatting events: torch vs cuda", fontweight="bold", fontsize=18)
     fig.tight_layout()
     plt.savefig("benchmark_warp_events.png", dpi=300)
-
-
-    # print results
-
-    # for n, events, flows in zip(num_events, events_, flows_):
-
-    #     # max 100 events
-    #     if n > 100:
-    #         continue
-
-    #     def once(events, flows):
-    #         torch.cuda.synchronize()
-    #         t0 = time.time()
-    #         # warp events
-    #         warped_events = iterative_3d_warp_torch(events.view(b, -1, 5), flows)
-    #         warped_events = warped_events[..., [0, 1, 2, 4]].view(b, -1, 4)  # remove z_orig
-    #         torch.cuda.synchronize()
-    #         t1 = time.time()
-    #         # splat to images
-    #         splatted = trilinear_splat_torch(warped_events, (d + 1, h, w))
-    #         torch.cuda.synchronize()
-    #         t2 = time.time()
-    #         # backward loss
-    #         loss = splatted.diff(dim=1).abs().sum()
-    #         loss.backward()
-    #         torch.cuda.synchronize()
-    #         t3 = time.time()
-    #         # set grad to none
-    #         flows.grad = None
-    #         return DotMap(warp=(t1 - t0) * 1000, splat=(t2 - t1) * 1000, backward=(t3 - t2) * 1000)
-
-    #     # warmup
-    #     once(events, flows)
-
-    #     # benchmark warp
-    #     for i in range(repeats):
-    #         result = once(events, flows)
-    #         for k, v in result.items():
-    #             results["torch_naive"][n][k] += [v]
-
-    # ## torch batch
-    # for n, events, flows in zip(num_events, events_, flows_):
-
-    #     def once(events, flows):
-    #         torch.cuda.synchronize()
-    #         t0 = time.time()
-    #         # warp events
-    #         warped_events = iterative_3d_warp_torch(events.view(b, -1, 5), flows)
-    #         warped_events = warped_events[..., [0, 1, 2, 4]].view(b, -1, 4)  # remove z_orig
-    #         torch.cuda.synchronize()
-    #         t1 = time.time()
-    #         # splat to images
-    #         splatted = trilinear_splat_torch(warped_events, (d + 1, h, w))
-    #         torch.cuda.synchronize()
-    #         t2 = time.time()
-    #         # backward loss
-    #         loss = splatted.diff(dim=1).abs().sum()
-    #         loss.backward()
-    #         torch.cuda.synchronize()
-    #         t3 = time.time()
-    #         # set grad to none
-    #         flows.grad = None
-    #         return DotMap(warp=(t1 - t0) * 1000, splat=(t2 - t1) * 1000, backward=(t3 - t2) * 1000)
-
-    #     # warmup
-    #     once(events, flows)
-
-    #     # benchmark warp
-    #     for i in range(repeats):
-    #         result = once(events, flows)
-    #         for k, v in result.items():
-    #             results["torch_batch"][n][k] += [v]
-
-    # ## cuda
-    # for n, events, flows in zip(num_events, events_, flows_):
-
-    #     def once(events, flows):
-    #         torch.cuda.synchronize()
-    #         t0 = time.time()
-    #         # warp events
-    #         warped_events = iterative_3d_warp_torch(events.view(b, -1, 5), flows)
-    #         warped_events = warped_events[..., [0, 1, 2, 4]].view(b, -1, 4)  # remove z_orig
-    #         torch.cuda.synchronize()
-    #         t1 = time.time()
-    #         # splat to images
-    #         splatted = trilinear_splat_torch(warped_events, (d + 1, h, w))
-    #         torch.cuda.synchronize()
-    #         t2 = time.time()
-    #         # backward loss
-    #         loss = splatted.diff(dim=1).abs().sum()
-    #         loss.backward()
-    #         torch.cuda.synchronize()
-    #         t3 = time.time()
-    #         # set grad to none
-    #         flows.grad = None
-    #         return DotMap(warp=(t1 - t0) * 1000, splat=(t2 - t1) * 1000, backward=(t3 - t2) * 1000)
-
-    #     # warmup
-    #     once(events, flows)
-
-    #     # benchmark warp
-    #     for i in range(repeats):
-    #         result = once(events, flows)
-    #         for k, v in result.items():
-    #             results["naive_torch"][n][k] += [v]
-
-
-
-
-    # methods = {
-    #     "torch": [iterative_3d_warp_torch, trilinear_splat_torch],
-    #     "torch_batch": [iterative_3d_warp_torch_batch, bilinear_splat_torch_batch],
-    #     "cuda": [iterative_3d_warp_cuda, trilinear_splat_cuda],
-    # }
-    # grads, losses = [], []
-    # seed = torch.randint(0, 1000, (1,)).item()
-    # dtype = torch.float
-    # for name, functions in methods.items():
-    #     torch.manual_seed(seed)
-    #     n = 100
-    #     b, d, h, w = 3, 3, 5, 5
-    #     events = torch.rand((b, d, n, 5), device="cuda", dtype=dtype) * torch.tensor([w - 1, h - 1, 1, 1, 1], device="cuda", dtype=dtype)
-    #     for i in range(d):
-    #         events[:, i, :, 2] += i
-    #         events[:, i, :, 3] = i
-    #     flows = torch.rand((b, d, h, w, 2), device="cuda", dtype=dtype)
-    #     flows.requires_grad = True
-
-    #     # select
-    #     warp_fn, splat_fn = functions
-
-    #     # warmup, then benchmark
-    #     if "batch" not in name:
-    #         warped_events = warp_fn(events.view(b, -1, 5), flows, d, True, 0)
-    #         runtime_warp = []
-    #         for i in range(10):
-    #             torch.cuda.synchronize()
-    #             t0 = time.time()
-    #             warped_events = warp_fn(events.view(b, -1, 5), flows, d, True, 0)
-    #             torch.cuda.synchronize()
-    #             runtime_warp.append(time.time() - t0)
-    #     else:
-    #         events_ = events[..., [2, 1, 0, 4]].permute(1, 0, 3, 2).contiguous()
-    #         flows_ = flows[..., [1, 0]].permute(1, 0, 4, 2, 3).contiguous()
-    #         warped_events = warp_fn(events_, flows_, d, True, 0)
-    #         runtime_warp = []
-    #         for i in range(10):
-    #             torch.cuda.synchronize()
-    #             t0 = time.time()
-    #             warped_events = warp_fn(events_, flows_, d, True, 0)
-    #             torch.cuda.synchronize()
-    #             runtime_warp.append(time.time() - t0)
-        
-    #     print(f"{name} warp: {(sum(runtime_warp) / len(runtime_warp)) * 1000:.3f} ms")
-
-    #     if "batch" not in name:
-    #         warped_events = warped_events[..., [0, 1, 2, 4]].view(b, -1, 4)  # remove z_orig
-
-    #         # warmup, then benchmark
-    #         splatted = splat_fn(warped_events, (d + 1, h, w))
-    #         runtime_splat = []
-    #         for i in range(10):
-    #             torch.cuda.synchronize()
-    #             t0 = time.time()
-    #             splatted = splat_fn(warped_events, (d + 1, h, w))
-    #             torch.cuda.synchronize()
-    #             runtime_splat.append(time.time() - t0)
-    #     else:
-    #         # warmup, then benchmark
-    #         splatted = splat_fn(warped_events, (d, h, w))  # d+1 inside
-    #         runtime_splat = []
-    #         for i in range(10):
-    #             torch.cuda.synchronize()
-    #             t0 = time.time()
-    #             splatted = splat_fn(warped_events, (d, h, w))
-    #             torch.cuda.synchronize()
-    #             runtime_splat.append(time.time() - t0)
-            
-    #         splatted = splatted.squeeze(2).permute(1, 0, 2, 3).contiguous()
-        
-    #     print(f"{name} splat: {(sum(runtime_splat) / len(runtime_splat)) * 1000:.3f} ms")
-
-    #     loss = splatted.diff(dim=1).abs()
-    #     loss_val = loss.sum()
-
-    #     torch.cuda.synchronize()
-    #     t0 = time.time()
-    #     loss_val.backward()
-    #     torch.cuda.synchronize()
-    #     runtime_backward = time.time() - t0
-
-    #     print(f"{name} backward: {runtime_backward * 1000:.3f} ms")
-
-    #     losses.append(loss_val.clone())
-    #     grads.append(flows.grad.clone())
-
-    # for l0, l1, g0, g1 in zip(losses[:-1], losses[1:], grads[:-1], grads[1:]):
-    #     print(f"Losses all equal: {torch.allclose(l0, l1)}, largest diff: {torch.max(torch.abs(l0 - l1))}")
-    #     print(f"Grads all equal: {torch.allclose(g0, g1)}, largest diff: {torch.max(torch.abs(g0 - g1))}")
-
-    # # print(f"Losses all equal: {torch.allclose(*losses)}, largest diff: {torch.max(torch.abs(losses[0] - losses[1]))}")
-    # # print(f"Grads all equal: {torch.allclose(*grads)}, largest diff: {torch.max(torch.abs(grads[0] - grads[1]))}")
