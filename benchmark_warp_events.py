@@ -763,9 +763,9 @@ if __name__ == "__main__":
         for i, (k, v) in enumerate(result.items()):
             x_line = np.array(list(v.keys()))
             y_line = np.array([np.median(times) for times in v.values()])
-            y_25 = np.array([np.percentile(times, 25) for times in v.values()])
-            y_75 = np.array([np.percentile(times, 75) for times in v.values()])
-            axs[0, i].fill_between(x_line, y_25, y_75, alpha=0.3)
+            # y_25 = np.array([np.percentile(times, 25) for times in v.values()])
+            # y_75 = np.array([np.percentile(times, 75) for times in v.values()])
+            # axs[0, i].fill_between(x_line, y_25, y_75, alpha=0.3)
             axs[0, i].plot(x_line, y_line, label=name.replace("_", " "))
             axs[0, i].set_title(k)
             axs[0, i].set_xscale("log")
@@ -775,17 +775,22 @@ if __name__ == "__main__":
         for i, (k, v) in enumerate(result.items()):
             x_line = np.array(list(v.keys()))
             y_line = np.array([np.median(times) / (1024**2) for times in v.values()])
-            y_25 = np.array([np.percentile(times, 25) / (1024**2) for times in v.values()])
-            y_75 = np.array([np.percentile(times, 75) / (1024**2) for times in v.values()])
-            axs[1, i].fill_between(x_line, y_25, y_75, alpha=0.3)
+            # y_25 = np.array([np.percentile(times, 25) / (1024**2) for times in v.values()])
+            # y_75 = np.array([np.percentile(times, 75) / (1024**2) for times in v.values()])
+            # axs[1, i].fill_between(x_line, y_25, y_75, alpha=0.3)
             axs[1, i].plot(x_line, y_line, label=name.replace("_", " "))
-            axs[1, i].set_xlabel("num events")
+            axs[1, i].set_xlabel("num events/bin")
             axs[1, i].set_xscale("log")
             axs[1, i].set_yscale("log")
             axs[1, i].grid(True)
+    # axs[0, -1].axvline(2119, color="black", linestyle="--")  # uzhfpv
+    # axs[0, -1].axvline(6230, color="black", linestyle="--")  # cz
+    # axs[0, -1].axvline(5867, color="black", linestyle="--")  # mvsec
+    # axs[0, -1].axvline(150797, color="black", linestyle="--")  # dsec
     axs[0, 0].legend()
     axs[0, 0].set_ylabel("runtime [ms]")
     axs[1, 0].set_ylabel("peak delta memory [MB]")
     fig.suptitle("Warping and splatting events: torch vs cuda", fontweight="bold", fontsize=18)
     fig.tight_layout()
-    plt.savefig("benchmark_warp_events.png", dpi=300)
+    # plt.savefig("benchmark_warp_events_jetson.pdf", bbox_inches="tight", transparent=True)
+    plt.savefig("benchmark_warp_events.pdf", bbox_inches="tight", transparent=True)
