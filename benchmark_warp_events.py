@@ -10,6 +10,10 @@ import torch.nn.functional as F
 from cuda_3d_ops import iterative_3d_warp_cuda, trilinear_splat_cuda
 
 
+# increase default font size matplotlib
+plt.rcParams.update({"font.size": 12})
+
+
 def pad_sequence(sequences, batch_first=False):
     """
     Args:
