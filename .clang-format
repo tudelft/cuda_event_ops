@@ -1,0 +1,49 @@
+# Based on Google C++ Style Guide
+BasedOnStyle: Google
+
+# Customize the options as needed below
+IndentWidth: 4            # Default is 2; set to 4 for wider indentation
+TabWidth: 4               # Tab width setting
+UseTab: Never             # Always use spaces instead of tabs
+
+# Braces style
+BraceWrapping:
+  AfterClass: true         # Open braces on a new line after class definitions
+  AfterControlStatement: false # Keep braces on the same line after if/else/for/while
+  AfterFunction: false     # Keep braces on the same line after function declarations
+  AfterNamespace: true     # Open braces on a new line for namespaces
+  BeforeCatch: true        # Put catch on a new line
+
+ColumnLimit: 100           # Increase line length limit (default is 80)
+
+# Pointer and reference alignment
+DerivePointerAlignment: false
+PointerAlignment: Left     # Align pointers to the left (* type vs type *)
+
+# Include sorting
+SortIncludes: true         # Sort includes alphabetically
+IncludeBlocks: Regroup     # Re-group includes
+
+# Spaces
+SpaceAfterCStyleCast: true # Add space after C-style casts
+SpaceBeforeParens: ControlStatements # Add space before parentheses in control statements only
+
+# Allow short functions in a single line
+AllowShortFunctionsOnASingleLine: Inline
+
+# Keep comments aligned
+AlignTrailingComments: true
+
+# Reflow comments to fit within the column limit
+ReflowComments: true
+
+# Indent case labels
+IndentCaseLabels: true
+
+# Wrap and align for readability
+BreakConstructorInitializers: BeforeComma
+AlignAfterOpenBracket: Align
+
+# Customize lambdas and template argument style
+LambdaBodyIndentation: Signature
+SpacesInAngles: false

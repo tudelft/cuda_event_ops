@@ -164,7 +164,7 @@ def iterative_3d_warp_torch_batch(events, flows, base):
     # events that go out anywhere are masked everywhere
     for i in range(d + 1):
         warped_events[i] = torch.cat([e * m for e, m in zip(warped_events[i], warped_mask_inside) if e is not None])
-    
+
     return torch.stack(warped_events)
 
 
@@ -206,22 +206,6 @@ def inv_l1_dist_prod(idx):
     weight = inv_dist.prod(dim=-2, keepdim=True)
 
     return idx_round, weight
-
-
-def compute_inside_mask(idx, resolution):
-    """
-    Args:
-        idx: (*, b, 2, n) tensor of (y, x) event indices in -2 dim.
-        resolution: (2,) tensor of (h, w) resolution.
-
-    Returns:
-        (*, b, 1, n) mask of events inside resolution.
-    """
-    # in taming: idx >= 0 & idx <= resolution - 1
-    # ensures enough space for a whole pixel
-    # < resolution is fine if pixel is int but doesn't work if pixel can be float
-    mask = (idx >= 0) & (idx <= resolution.unsqueeze(1) - 1)
-    return mask.all(dim=-2, keepdim=True)
 
 
 def accumulate_to_image(idx, weight, mask, resolution):
@@ -353,8 +337,12 @@ def iterative_3d_warp_bilinear_splat_torch_combined(events, flow, base):
             # iwe
             values = select_events[..., 3:4, :].repeat(1, 1, 1, 4)  # repeat for corners
             values_fw, values_bw = values.chunk(2)
-            iwe[t_ref_fw:] += accumulate_to_image(corners_fw, weights_fw * values_fw, torch.ones_like(weights_fw), resolution)
-            iwe[:t_ref_bw] += accumulate_to_image(corners_bw, weights_bw * values_bw, torch.ones_like(weights_bw), resolution)
+            iwe[t_ref_fw:] += accumulate_to_image(
+                corners_fw, weights_fw * values_fw, torch.ones_like(weights_fw), resolution
+            )
+            iwe[:t_ref_bw] += accumulate_to_image(
+                corners_bw, weights_bw * values_bw, torch.ones_like(weights_bw), resolution
+            )
 
     return iwe
 
@@ -568,7 +556,9 @@ if __name__ == "__main__":
     for n in num_events:
         # events
         # (b, d, n, 5) tensor with (x, y, z, zi, val) in last dim
-        events = torch.rand(b, d, n, 5, device="cuda", dtype=dtype) * torch.tensor([w - 1, h - 1, 1, 1, 1], device="cuda", dtype=dtype)
+        events = torch.rand(b, d, n, 5, device="cuda", dtype=dtype) * torch.tensor(
+            [w - 1, h - 1, 1, 1, 1], device="cuda", dtype=dtype
+        )
         for i in range(d):
             events[:, i, :, 2] += i  # z
             events[:, i, :, 3] = i  # zi = floor(z)
@@ -578,7 +568,7 @@ if __name__ == "__main__":
         flows = torch.rand(b, d, h, w, 2, device="cuda", dtype=dtype)
         flows.requires_grad = True
         flows_.append(flows)
-    
+
     # naive torch
     def torch_naive_once(events, flows):
         torch.cuda.synchronize()
@@ -606,7 +596,9 @@ if __name__ == "__main__":
         torch.cuda.reset_peak_memory_stats()
         t3 = time.time()
         # store results
-        result_time = DotMap(warp=(t1 - t0) * 1000, splat=(t2 - t1) * 1000, backward=(t3 - t2) * 1000, total=(t3 - t0) * 1000)
+        result_time = DotMap(
+            warp=(t1 - t0) * 1000, splat=(t2 - t1) * 1000, backward=(t3 - t2) * 1000, total=(t3 - t0) * 1000
+        )
         result_memory = DotMap(warp=m1 - m0, splat=m2 - m0, backward=m3 - m0, total=max(m1 - m0, m2 - m0, m3 - m0))
         loss_val = loss.detach().clone()
         flow_grad = flows.grad.clone()
@@ -643,7 +635,9 @@ if __name__ == "__main__":
         torch.cuda.reset_peak_memory_stats()
         t3 = time.time()
         # store results
-        result_time = DotMap(warp=(t1 - t0) * 1000, splat=(t2 - t1) * 1000, backward=(t3 - t2) * 1000, total=(t3 - t0) * 1000)
+        result_time = DotMap(
+            warp=(t1 - t0) * 1000, splat=(t2 - t1) * 1000, backward=(t3 - t2) * 1000, total=(t3 - t0) * 1000
+        )
         result_memory = DotMap(warp=m1 - m0, splat=m2 - m0, backward=m3 - m0, total=max(m1 - m0, m2 - m0, m3 - m0))
         loss_val = loss.detach().clone()
         flow_grad = flows.grad.clone()
@@ -665,7 +659,6 @@ if __name__ == "__main__":
         torch.cuda.synchronize()
         m1 = torch.cuda.max_memory_allocated()
         torch.cuda.reset_peak_memory_stats()
-        t1 = time.time()
         # backward loss
         loss = splatted.diff(dim=1).abs().sum()
         loss.backward()
@@ -709,7 +702,9 @@ if __name__ == "__main__":
         torch.cuda.reset_peak_memory_stats()
         t3 = time.time()
         # store results
-        result_time = DotMap(warp=(t1 - t0) * 1000, splat=(t2 - t1) * 1000, backward=(t3 - t2) * 1000, total=(t3 - t0) * 1000)
+        result_time = DotMap(
+            warp=(t1 - t0) * 1000, splat=(t2 - t1) * 1000, backward=(t3 - t2) * 1000, total=(t3 - t0) * 1000
+        )
         result_memory = DotMap(warp=m1 - m0, splat=m2 - m0, backward=m3 - m0, total=max(m1 - m0, m2 - m0, m3 - m0))
         loss_val = loss.detach().clone()
         flow_grad = flows.grad.clone()
@@ -757,7 +752,7 @@ if __name__ == "__main__":
             grads_eq.append(torch.allclose(g0, g1))
             losses_diff.append(torch.max(torch.abs(l0 - l1)))
             grads_diff.append(torch.max(torch.abs(g0 - g1)))
-        
+
         print(f"Losses all equal for {n} events: {all(losses_eq)}, largest diff: {max(losses_diff)}")
         print(f"Grads all equal for {n} events: {all(grads_eq)}, largest diff: {max(grads_diff)}")
 
