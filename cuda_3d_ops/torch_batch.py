@@ -93,6 +93,8 @@ def iterative_3d_warp(events, flows, base):
         torch.Tensor: A tensor of shape (d + 1, b, 4, n) with the warped events.
     """
     # NOTE: temporary
+    b, d, _, _, _ = flows.shape
+    events = events.view(b, d, -1, 5).contiguous()
     events = events[..., [2, 1, 0, 4]].permute(1, 0, 3, 2).contiguous()
     flows = flows[..., [1, 0]].permute(1, 0, 4, 2, 3).contiguous()
 
