@@ -86,10 +86,7 @@ if __name__ == "__main__":
     methods = {
         "torch_naive": (c3o.tn.iterative_3d_warp, c3o.tn.trilinear_splat),
         "torch_batch": (partial(c3o.tb.iterative_3d_warp, base=d), c3o.tb.trilinear_splat),
-        "cuda": (
-            partial(c3o.cu.iterative_3d_warp, num_warps=d, keep_warping=True, num_backprop_points=0),
-            c3o.cu.trilinear_splat,
-        ),
+        "cuda": (partial(c3o.cu.iterative_3d_warp, num_warps=d), c3o.cu.trilinear_splat),
     }
 
     # benchmark

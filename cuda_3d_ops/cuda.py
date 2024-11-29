@@ -43,7 +43,7 @@ class Iterative3DWarp(torch.autograd.Function):
 
 
 def iterative_3d_warp(
-    events, flow_fields, num_warps, keep_warping, num_backprop_points, threads=1024, points_per_thread=1
+    events, flow_fields, num_warps, keep_warping=True, num_backprop_points=0, threads=1024, points_per_thread=1
 ):
     """
     Iteratively warps events in 3D using bilinearly-sampled flows.
@@ -51,6 +51,7 @@ def iterative_3d_warp(
     Args:
         events (torch.Tensor): A tensor of shape (b, n, 5), where each event has (x, y, z, zi, val).
         flows (torch.Tensor): A tensor of shape (b, d, h, w, 2), where each flow has (u, v).
+        num_warps (int): The number of warping stages.
 
     Returns:
         torch.Tensor: A tensor of shape (b, n, d + 1, 5), where each event has (x, y, z, z_orig, val).
