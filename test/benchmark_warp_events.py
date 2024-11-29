@@ -1,17 +1,11 @@
 import time
-from math import floor
 
 from dotmap import DotMap
-import matplotlib.pyplot as plt
 import numpy as np
 import torch
 import torch.nn.functional as F
 
-from cuda_3d_ops import iterative_3d_warp_cuda, trilinear_splat_cuda
-
-
-# increase default font size matplotlib
-plt.rcParams.update({"font.size": 12})
+import cuda_3d_ops as c3o
 
 
 def pad_sequence(sequences, batch_first=False):
@@ -347,199 +341,6 @@ def iterative_3d_warp_bilinear_splat_torch_combined(events, flow, base):
     return iwe
 
 
-def iterative_3d_warp_torch(events, flows, mode="bilinear"):
-    """
-    Iteratively warps events in 3D using flow fields and bilinear/trilinear interpolation.
-
-    Args:
-        events (torch.Tensor): A tensor of shape (b, n, 5), where each event has (x, y, z, zi, val).
-        flows (torch.Tensor): A tensor of shape (b, d, h, w, 2), where each flow has (u, v).
-
-    Returns:
-        torch.Tensor: A tensor of shape (b, n, d + 1, 5), where each event has (x, y, z, z_orig, val).
-    """
-    b, n, _ = events.shape
-    _, d, h, w, _ = flows.shape
-    warped_events = torch.zeros(b, n, d + 1, 5, dtype=events.dtype, device=events.device)
-
-    def out_of_bounds(x, y):
-        return x < 0 or x >= w - 1 or y < 0 or y >= h - 1
-
-    def trilinear_interpolation(x, y, z, flows):
-        # determine voxel indices
-        x0, y0, z0 = floor(x), floor(y), floor(z)
-        x1, y1, z1 = x0 + 1, y0 + 1, z0 + 1
-
-        # compute weights
-        dx, dy, dz = x - x0, y - y0, z - z0
-        wx0, wy0, wz0 = 1 - dx, 1 - dy, 1 - dz
-        wx1, wy1, wz1 = dx, dy, dz
-
-        # compute flow
-        # make sure indices are within bounds because we warp to edge of z
-        flow = 0
-        if 0 <= x0 < w and 0 <= y0 < h and 0 <= z0 < d:
-            flow += flows[z0, y0, x0] * wx0 * wy0 * wz0
-        if 0 <= x1 < w and 0 <= y0 < h and 0 <= z0 < d:
-            flow += flows[z0, y0, x1] * wx1 * wy0 * wz0
-        if 0 <= x0 < w and 0 <= y1 < h and 0 <= z0 < d:
-            flow += flows[z0, y1, x0] * wx0 * wy1 * wz0
-        if 0 <= x1 < w and 0 <= y1 < h and 0 <= z0 < d:
-            flow += flows[z0, y1, x1] * wx1 * wy1 * wz0
-        if 0 <= x0 < w and 0 <= y0 < h and 0 <= z1 < d:
-            flow += flows[z1, y0, x0] * wx0 * wy0 * wz1
-        if 0 <= x1 < w and 0 <= y0 < h and 0 <= z1 < d:
-            flow += flows[z1, y0, x1] * wx1 * wy0 * wz1
-        if 0 <= x0 < w and 0 <= y1 < h and 0 <= z1 < d:
-            flow += flows[z1, y1, x0] * wx0 * wy1 * wz1
-        if 0 <= x1 < w and 0 <= y1 < h and 0 <= z1 < d:
-            flow += flows[z1, y1, x1] * wx1 * wy1 * wz1
-
-        return flow
-
-    def bilinear_interpolation(x, y, zi, flows):
-        # determine voxel indices
-        x0, y0 = floor(x), floor(y)
-        x1, y1 = x0 + 1, y0 + 1
-
-        # get corner flows
-        f00 = flows[zi, y0, x0]
-        f01 = flows[zi, y0, x1]
-        f10 = flows[zi, y1, x0]
-        f11 = flows[zi, y1, x1]
-
-        # compute weights
-        w00 = (y1 - y) * (x1 - x)
-        w01 = (y1 - y) * (x - x0)
-        w10 = (y - y0) * (x1 - x)
-        w11 = (y - y0) * (x - x0)
-
-        # compute flow
-        flow = f00 * w00 + f01 * w01 + f10 * w10 + f11 * w11
-
-        return flow
-
-    for bi in range(b):
-        for ni in range(n):
-            x, y, z, zi, val = events[bi, ni]
-            z_orig = z.clone()
-            is_out_of_bounds = out_of_bounds(x, y)
-            if is_out_of_bounds:
-                continue
-
-            # warp forward: increasing z values
-            # start with next integer z value
-            for z_next in range(int(zi) + 1, d + 1):
-                dz = z_next - z
-
-                # interpolation to get flow at (x, y)
-                if mode == "bilinear":
-                    u, v = bilinear_interpolation(x, y, z_next - 1, flows[bi])
-                else:
-                    u, v = trilinear_interpolation(x, y, z, flows[bi])
-
-                # update (x, y, z) using flow
-                # scale flow by dz to account for non-integer z values
-                x = x + u * dz
-                y = y + v * dz
-                z = z + dz
-
-                # save warped event
-                warped_events[bi, ni, z_next] = torch.stack([x, y, z, z_orig, val])
-
-                # check if out of bounds
-                if out_of_bounds(x, y):
-                    is_out_of_bounds = True
-                    break
-
-            # only do if not yet out of bounds
-            if not is_out_of_bounds:
-                # reload original coordinates
-                x, y, z, zi, val = events[bi, ni]
-
-                # warp backward: decreasing z values
-                for z_next in range(int(zi), -1, -1):
-                    dz = z - z_next
-
-                    # bilinear interpolation to get flow at (x, y)
-                    if mode == "bilinear":
-                        u, v = bilinear_interpolation(x, y, z_next, flows[bi])
-                    else:
-                        u, v = trilinear_interpolation(x, y, z, flows[bi])
-
-                    # update (x, y, z) using flow
-                    # scale flow by dz to account for non-integer z values
-                    x = x - u * dz
-                    y = y - v * dz
-                    z = z - dz
-
-                    # save warped event
-                    warped_events[bi, ni, z_next] = torch.stack([x, y, z, z_orig, val])
-
-                    # check if out of bounds
-                    if out_of_bounds(x, y):
-                        is_out_of_bounds = True
-                        break
-
-            # set all values to zero if out of bounds at some point
-            if is_out_of_bounds:
-                warped_events[bi, ni, :, -1] = 0
-
-    return warped_events
-
-
-def trilinear_splat_torch(events, grid_resolution):
-    """
-    Trilinearly splats events into a grid.
-
-    Args:
-        events (torch.Tensor): A tensor of shape (b, n, 5), where each event has (x, y, z, z_orig, val).
-        grid_resolution (tuple): The resolution of the output grid (d, h, w).
-
-    Returns:
-        torch.Tensor: A tensor of shape (b, d, h, w) with the splatted values.
-    """
-    b, n, _ = events.shape
-    d, h, w = grid_resolution
-    output = torch.zeros(b, d, h, w, dtype=events.dtype, device=events.device)
-
-    for bi in range(b):
-        for ni in range(n):
-            x, y, z, val = events[bi, ni]
-
-            if val == 0:
-                continue
-
-            # determine voxel indices
-            x0, y0, z0 = floor(x), floor(y), floor(z)
-            x1, y1, z1 = x0 + 1, y0 + 1, z0 + 1
-
-            # compute weights
-            dx, dy, dz = x - x0, y - y0, z - z0
-            wx0, wy0, wz0 = 1 - dx, 1 - dy, 1 - dz
-            wx1, wy1, wz1 = dx, dy, dz
-
-            # make sure indices are within bounds
-            if 0 <= x0 < w and 0 <= y0 < h and 0 <= z0 < d:
-                output[bi, z0, y0, x0] += val * wx0 * wy0 * wz0
-            if 0 <= x1 < w and 0 <= y0 < h and 0 <= z0 < d:
-                output[bi, z0, y0, x1] += val * wx1 * wy0 * wz0
-            if 0 <= x0 < w and 0 <= y1 < h and 0 <= z0 < d:
-                output[bi, z0, y1, x0] += val * wx0 * wy1 * wz0
-            if 0 <= x1 < w and 0 <= y1 < h and 0 <= z0 < d:
-                output[bi, z0, y1, x1] += val * wx1 * wy1 * wz0
-            if 0 <= x0 < w and 0 <= y0 < h and 0 <= z1 < d:
-                output[bi, z1, y0, x0] += val * wx0 * wy0 * wz1
-            if 0 <= x1 < w and 0 <= y0 < h and 0 <= z1 < d:
-                output[bi, z1, y0, x1] += val * wx1 * wy0 * wz1
-            if 0 <= x0 < w and 0 <= y1 < h and 0 <= z1 < d:
-                output[bi, z1, y1, x0] += val * wx0 * wy1 * wz1
-            if 0 <= x1 < w and 0 <= y1 < h and 0 <= z1 < d:
-                output[bi, z1, y1, x1] += val * wx1 * wy1 * wz1
-
-    return output
-
-
 """
 TODO:
 - Why quite large grad differences for large number of events? Could be check for inside? <= vs <?
@@ -576,14 +377,14 @@ if __name__ == "__main__":
         torch.cuda.reset_peak_memory_stats()
         t0 = time.time()
         # warp events
-        warped_events = iterative_3d_warp_torch(events.view(b, -1, 5), flows)
+        warped_events = c3o.tn.iterative_3d_warp(events.view(b, -1, 5), flows)
         warped_events = warped_events[..., [0, 1, 2, 4]].view(b, -1, 4)  # remove z_orig
         torch.cuda.synchronize()
         m1 = torch.cuda.max_memory_allocated()
         torch.cuda.reset_peak_memory_stats()
         t1 = time.time()
         # splat to images
-        splatted = trilinear_splat_torch(warped_events, (d + 1, h, w))
+        splatted = c3o.tn.trilinear_splat(warped_events, (d + 1, h, w))
         torch.cuda.synchronize()
         m2 = torch.cuda.max_memory_allocated()
         torch.cuda.reset_peak_memory_stats()
@@ -596,84 +397,84 @@ if __name__ == "__main__":
         torch.cuda.reset_peak_memory_stats()
         t3 = time.time()
         # store results
-        result_time = DotMap(
+        result_time = dict(
             warp=(t1 - t0) * 1000, splat=(t2 - t1) * 1000, backward=(t3 - t2) * 1000, total=(t3 - t0) * 1000
         )
-        result_memory = DotMap(warp=m1 - m0, splat=m2 - m0, backward=m3 - m0, total=max(m1 - m0, m2 - m0, m3 - m0))
+        result_memory = dict(warp=m1 - m0, splat=m2 - m0, backward=m3 - m0, total=max(m1 - m0, m2 - m0, m3 - m0))
         loss_val = loss.detach().clone()
         flow_grad = flows.grad.clone()
         # set grad to none
         flows.grad = None
         return result_time, result_memory, loss_val, flow_grad
 
-    # batched torch
-    def torch_batch_once(events, flows):
-        events_p = events[..., [2, 1, 0, 4]].permute(1, 0, 3, 2).contiguous()
-        flows_p = flows[..., [1, 0]].permute(1, 0, 4, 2, 3).contiguous()
-        torch.cuda.synchronize()
-        m0 = torch.cuda.memory_allocated()
-        torch.cuda.reset_peak_memory_stats()
-        t0 = time.time()
-        # warp events
-        warped_events = iterative_3d_warp_torch_batch(events_p, flows_p, d)
-        torch.cuda.synchronize()
-        m1 = torch.cuda.max_memory_allocated()
-        torch.cuda.reset_peak_memory_stats()
-        t1 = time.time()
-        # splat to images
-        splatted = bilinear_splat_torch_batch(warped_events, (d, h, w))  # d+1 inside
-        splatted = splatted.squeeze(2).permute(1, 0, 2, 3).contiguous()
-        torch.cuda.synchronize()
-        m2 = torch.cuda.max_memory_allocated()
-        torch.cuda.reset_peak_memory_stats()
-        t2 = time.time()
-        # backward loss
-        loss = splatted.diff(dim=1).abs().sum()
-        loss.backward()
-        torch.cuda.synchronize()
-        m3 = torch.cuda.max_memory_allocated()
-        torch.cuda.reset_peak_memory_stats()
-        t3 = time.time()
-        # store results
-        result_time = DotMap(
-            warp=(t1 - t0) * 1000, splat=(t2 - t1) * 1000, backward=(t3 - t2) * 1000, total=(t3 - t0) * 1000
-        )
-        result_memory = DotMap(warp=m1 - m0, splat=m2 - m0, backward=m3 - m0, total=max(m1 - m0, m2 - m0, m3 - m0))
-        loss_val = loss.detach().clone()
-        flow_grad = flows.grad.clone()
-        # set grad to none
-        flows.grad = None
-        return result_time, result_memory, loss_val, flow_grad
+    # # batched torch
+    # def torch_batch_once(events, flows):
+    #     events_p = events[..., [2, 1, 0, 4]].permute(1, 0, 3, 2).contiguous()
+    #     flows_p = flows[..., [1, 0]].permute(1, 0, 4, 2, 3).contiguous()
+    #     torch.cuda.synchronize()
+    #     m0 = torch.cuda.memory_allocated()
+    #     torch.cuda.reset_peak_memory_stats()
+    #     t0 = time.time()
+    #     # warp events
+    #     warped_events = iterative_3d_warp_torch_batch(events_p, flows_p, d)
+    #     torch.cuda.synchronize()
+    #     m1 = torch.cuda.max_memory_allocated()
+    #     torch.cuda.reset_peak_memory_stats()
+    #     t1 = time.time()
+    #     # splat to images
+    #     splatted = bilinear_splat_torch_batch(warped_events, (d, h, w))  # d+1 inside
+    #     splatted = splatted.squeeze(2).permute(1, 0, 2, 3).contiguous()
+    #     torch.cuda.synchronize()
+    #     m2 = torch.cuda.max_memory_allocated()
+    #     torch.cuda.reset_peak_memory_stats()
+    #     t2 = time.time()
+    #     # backward loss
+    #     loss = splatted.diff(dim=1).abs().sum()
+    #     loss.backward()
+    #     torch.cuda.synchronize()
+    #     m3 = torch.cuda.max_memory_allocated()
+    #     torch.cuda.reset_peak_memory_stats()
+    #     t3 = time.time()
+    #     # store results
+    #     result_time = DotMap(
+    #         warp=(t1 - t0) * 1000, splat=(t2 - t1) * 1000, backward=(t3 - t2) * 1000, total=(t3 - t0) * 1000
+    #     )
+    #     result_memory = DotMap(warp=m1 - m0, splat=m2 - m0, backward=m3 - m0, total=max(m1 - m0, m2 - m0, m3 - m0))
+    #     loss_val = loss.detach().clone()
+    #     flow_grad = flows.grad.clone()
+    #     # set grad to none
+    #     flows.grad = None
+    #     return result_time, result_memory, loss_val, flow_grad
 
-    # combined torch
-    # no border compensation
-    def torch_combined_once(events, flows):
-        events_p = events[..., [2, 1, 0, 4]].permute(1, 0, 3, 2).contiguous()
-        flows_p = flows[..., [1, 0]].permute(1, 0, 4, 2, 3).contiguous()
-        torch.cuda.synchronize()
-        m0 = torch.cuda.memory_allocated()
-        torch.cuda.reset_peak_memory_stats()
-        t0 = time.time()
-        # combined warp and splat events to images
-        splatted = iterative_3d_warp_bilinear_splat_torch_combined(events_p, flows_p, d)
-        torch.cuda.synchronize()
-        m1 = torch.cuda.max_memory_allocated()
-        torch.cuda.reset_peak_memory_stats()
-        # backward loss
-        loss = splatted.diff(dim=1).abs().sum()
-        loss.backward()
-        torch.cuda.synchronize()
-        m2 = torch.cuda.max_memory_allocated()
-        torch.cuda.reset_peak_memory_stats()
-        t2 = time.time()
-        # store results
-        result_time = DotMap(warp=np.nan, splat=np.nan, backward=np.nan, total=(t2 - t0) * 1000)
-        result_memory = DotMap(warp=np.nan, splat=np.nan, backward=np.nan, total=max(m1 - m0, m2 - m0))
-        loss_val = loss.detach().clone()
-        flow_grad = flows.grad.clone()
-        # set grad to none
-        flows.grad = None
-        return result_time, result_memory, loss_val, flow_grad
+    # # combined torch
+    # # no border compensation
+    # def torch_combined_once(events, flows):
+    #     events_p = events[..., [2, 1, 0, 4]].permute(1, 0, 3, 2).contiguous()
+    #     flows_p = flows[..., [1, 0]].permute(1, 0, 4, 2, 3).contiguous()
+    #     torch.cuda.synchronize()
+    #     m0 = torch.cuda.memory_allocated()
+    #     torch.cuda.reset_peak_memory_stats()
+    #     t0 = time.time()
+    #     # combined warp and splat events to images
+    #     splatted = iterative_3d_warp_bilinear_splat_torch_combined(events_p, flows_p, d)
+    #     torch.cuda.synchronize()
+    #     m1 = torch.cuda.max_memory_allocated()
+    #     torch.cuda.reset_peak_memory_stats()
+    #     # backward loss
+    #     loss = splatted.diff(dim=1).abs().sum()
+    #     loss.backward()
+    #     torch.cuda.synchronize()
+    #     m2 = torch.cuda.max_memory_allocated()
+    #     torch.cuda.reset_peak_memory_stats()
+    #     t2 = time.time()
+    #     # store results
+    #     result_time = DotMap(warp=np.nan, splat=np.nan, backward=np.nan, total=(t2 - t0) * 1000)
+    #     result_memory = DotMap(warp=np.nan, splat=np.nan, backward=np.nan, total=max(m1 - m0, m2 - m0))
+    #     loss_val = loss.detach().clone()
+    #     flow_grad = flows.grad.clone()
+    #     # set grad to none
+    #     flows.grad = None
+    #     return result_time, result_memory, loss_val, flow_grad
 
     # cuda
     def cuda_once(events, flows):
@@ -682,14 +483,14 @@ if __name__ == "__main__":
         torch.cuda.reset_peak_memory_stats()
         t0 = time.time()
         # warp events
-        warped_events = iterative_3d_warp_cuda(events.view(b, -1, 5), flows, d, True, 0)
+        warped_events = c3o.cu.iterative_3d_warp(events.view(b, -1, 5), flows, d, True, 0)
         warped_events = warped_events[..., [0, 1, 2, 4]].view(b, -1, 4)  # remove z_orig
         torch.cuda.synchronize()
         m1 = torch.cuda.max_memory_allocated()
         torch.cuda.reset_peak_memory_stats()
         t1 = time.time()
         # splat to images
-        splatted = trilinear_splat_cuda(warped_events, (d + 1, h, w))
+        splatted = c3o.cu.trilinear_splat(warped_events, (d + 1, h, w))
         torch.cuda.synchronize()
         m2 = torch.cuda.max_memory_allocated()
         torch.cuda.reset_peak_memory_stats()
@@ -702,10 +503,18 @@ if __name__ == "__main__":
         torch.cuda.reset_peak_memory_stats()
         t3 = time.time()
         # store results
-        result_time = DotMap(
-            warp=(t1 - t0) * 1000, splat=(t2 - t1) * 1000, backward=(t3 - t2) * 1000, total=(t3 - t0) * 1000
-        )
-        result_memory = DotMap(warp=m1 - m0, splat=m2 - m0, backward=m3 - m0, total=max(m1 - m0, m2 - m0, m3 - m0))
+        result_time = {
+            "warp": (t1 - t0) * 1000,
+            "splat": (t2 - t1) * 1000,
+            "backward": (t3 - t2) * 1000,
+            "total": (t3 - t0) * 1000,
+        }
+        result_memory = {
+            "warp": m1 - m0,
+            "splat": m2 - m0,
+            "backward": m3 - m0,
+            "total": max(m1 - m0, m2 - m0, m3 - m0),
+        }
         loss_val = loss.detach().clone()
         flow_grad = flows.grad.clone()
         # set grad to none
@@ -715,8 +524,7 @@ if __name__ == "__main__":
     # methods
     methods = {
         "torch_naive": torch_naive_once,
-        "torch_batch": torch_batch_once,
-        # "torch_combined": torch_combined_once,  # no border compensation
+        # "torch_batch": torch_batch_once,
         "cuda": cuda_once,
     }
 
@@ -756,40 +564,18 @@ if __name__ == "__main__":
         print(f"Losses all equal for {n} events: {all(losses_eq)}, largest diff: {max(losses_diff)}")
         print(f"Grads all equal for {n} events: {all(grads_eq)}, largest diff: {max(grads_diff)}")
 
-    # plot results
-    fig, axs = plt.subplots(2, 4, figsize=(12, 6), sharey="row", sharex="col")
+    # print results
     for name, result in results_time.items():
-        for i, (k, v) in enumerate(result.items()):
-            x_line = np.array(list(v.keys()))
-            y_line = np.array([np.median(times) for times in v.values()])
-            # y_25 = np.array([np.percentile(times, 25) for times in v.values()])
-            # y_75 = np.array([np.percentile(times, 75) for times in v.values()])
-            # axs[0, i].fill_between(x_line, y_25, y_75, alpha=0.3)
-            axs[0, i].plot(x_line, y_line, label=name.replace("_", " "))
-            axs[0, i].set_title(k)
-            axs[0, i].set_xscale("log")
-            axs[0, i].set_yscale("log")
-            axs[0, i].grid(True)
+        print(name)
+        for k, v in result.items():
+            print(k)
+            for n, ts in v.items():
+                print(f"{n} events: {np.median(ts):.3f} ms")
+        print()
     for name, result in results_memory.items():
-        for i, (k, v) in enumerate(result.items()):
-            x_line = np.array(list(v.keys()))
-            y_line = np.array([np.median(times) / (1024**2) for times in v.values()])
-            # y_25 = np.array([np.percentile(times, 25) / (1024**2) for times in v.values()])
-            # y_75 = np.array([np.percentile(times, 75) / (1024**2) for times in v.values()])
-            # axs[1, i].fill_between(x_line, y_25, y_75, alpha=0.3)
-            axs[1, i].plot(x_line, y_line, label=name.replace("_", " "))
-            axs[1, i].set_xlabel("num events/bin")
-            axs[1, i].set_xscale("log")
-            axs[1, i].set_yscale("log")
-            axs[1, i].grid(True)
-    # axs[0, -1].axvline(2119, color="black", linestyle="--")  # uzhfpv
-    # axs[0, -1].axvline(6230, color="black", linestyle="--")  # cz
-    # axs[0, -1].axvline(5867, color="black", linestyle="--")  # mvsec
-    # axs[0, -1].axvline(150797, color="black", linestyle="--")  # dsec
-    axs[0, 0].legend()
-    axs[0, 0].set_ylabel("runtime [ms]")
-    axs[1, 0].set_ylabel("peak delta memory [MB]")
-    fig.suptitle("Warping and splatting events: torch vs cuda", fontweight="bold", fontsize=18)
-    fig.tight_layout()
-    # plt.savefig("benchmark_warp_events_jetson.pdf", bbox_inches="tight", transparent=True)
-    plt.savefig("benchmark_warp_events.pdf", bbox_inches="tight", transparent=True)
+        print(name)
+        for k, v in result.items():
+            print(k)
+            for n, mem in v.items():
+                print(f"{n} events: {np.median(mem) / (1024**2):.3f} MB")
+        print()
