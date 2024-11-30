@@ -13,17 +13,17 @@ if not torch.cuda.is_available():
 
 
 setup(
-    name="cuda_3d_ops",
+    name="cuda_event_ops",
     packages=find_packages(),
     ext_modules=[
         CUDAExtension(
             "iterative_3d_warp_cuda._C",
-            ["cuda_3d_ops/iterative_3d_warp/extension.cpp", "cuda_3d_ops/iterative_3d_warp/kernel.cu"],
+            ["cuda_event_ops/iterative_3d_warp/extension.cpp", "cuda_event_ops/iterative_3d_warp/kernel.cu"],
             extra_compile_args={"cxx": ["-O3"], "nvcc": ["-O3"]},
         ),
         CUDAExtension(
             "trilinear_splat_cuda._C",
-            ["cuda_3d_ops/trilinear_splat/extension.cpp", "cuda_3d_ops/trilinear_splat/kernel.cu"],
+            ["cuda_event_ops/trilinear_splat/extension.cpp", "cuda_event_ops/trilinear_splat/kernel.cu"],
             extra_compile_args={"cxx": ["-O3"], "nvcc": ["-O3"]},
         ),
     ],

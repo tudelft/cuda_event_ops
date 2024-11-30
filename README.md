@@ -1,6 +1,6 @@
 # CUDA event warping and splatting
 
-CUDA PyTorch extensions for iterative event warping and splatting.
+CUDA PyTorch extensions for iterative warping and splatting of events.
 
 ## Ops
 
@@ -12,5 +12,5 @@ CUDA PyTorch extensions for iterative event warping and splatting.
 ```bash
 pip install .
 # or
-pip install git+ssh://git@github.com/Huizerd/cuda_3d_ops
+pip install git+ssh://git@github.com/tudelft/cuda_event_ops
 ```
