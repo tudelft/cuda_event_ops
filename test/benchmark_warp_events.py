@@ -1,4 +1,5 @@
 from functools import partial
+from pathlib import Path
 import time
 
 from dotmap import DotMap
@@ -8,11 +9,6 @@ import torch
 import cuda_3d_ops as c3o
 
 
-"""
-TODO:
-- Why quite large grad differences for large number of events? Could be check for inside? <= vs <?
-- Add combined method for cuda? Small differences for combined torch but maybe worth it
-"""
 if __name__ == "__main__":
     # generate events and flows
     torch.manual_seed(0)
@@ -84,8 +80,8 @@ if __name__ == "__main__":
 
     # methods
     methods = {
-        "torch_naive": (c3o.tn.iterative_3d_warp, c3o.tn.trilinear_splat),
-        "torch_batch": (partial(c3o.tb.iterative_3d_warp, num_warps=d), c3o.tb.trilinear_splat),
+        "torchnaive": (c3o.tn.iterative_3d_warp, c3o.tn.trilinear_splat),
+        "torchbatch": (partial(c3o.tb.iterative_3d_warp, num_warps=d), c3o.tb.trilinear_splat),
         "cuda": (partial(c3o.cu.iterative_3d_warp, num_warps=d), c3o.cu.trilinear_splat),
     }
 
@@ -94,7 +90,7 @@ if __name__ == "__main__":
     for name, fns in methods.items():
         for n, events, flows in zip(num_events, events_, flows_):
             # max 100 events if naive torch
-            if name == "torch_naive" and n > 100:
+            if name == "torchnaive" and n > 100:
                 continue
             print(f"Running {name} with {n} events")
 
@@ -140,3 +136,19 @@ if __name__ == "__main__":
             for n, mem in v.items():
                 print(f"{n} events: {np.median(mem) / (1024**2):.3f} MB")
         print()
+
+    # write results to separate files
+    folder = Path(__file__).parent / "benchmark_warp_events_results_4090"
+    folder.mkdir(exist_ok=True, parents=True)
+    for name, result in results_time.items():
+        for k, v in result.items():
+            with open(folder / f"{name}_{k}_runtime.csv", "w") as f:
+                f.write("num_events,time_ms\n")
+                for n, ts in v.items():
+                    f.write(f"{n},{np.median(ts):.3f}\n")
+    for name, result in results_memory.items():
+        for k, v in result.items():
+            with open(folder / f"{name}_{k}_memory.csv", "w") as f:
+                f.write("num_events,memory_mb\n")
+                for n, mem in v.items():
+                    f.write(f"{n},{np.median(mem) / (1024**2):.3f}\n")
