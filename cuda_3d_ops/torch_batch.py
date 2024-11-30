@@ -85,11 +85,6 @@ def iterative_3d_warp(events, flows, num_warps):
     b, d, h, w, _ = flows.shape
     resolution = torch.tensor([w, h], device=flows.device)
 
-    # repeat for simultaneous fw and bw warping
-    # (b, n, 5) -> (b, d, 4, n)
-    events = events[..., [0, 1, 2, 4]].view(b, d, -1, 4).transpose(2, 3)
-    events = events.repeat(1, 2, 1, 1)  # copies
-
     # lists to store warped events, ts and inside mask
     # we need to know where they came from + where they're going
     warped_events = [[None for _ in range(d)] for _ in range(d + 1)]
@@ -107,13 +102,14 @@ def iterative_3d_warp(events, flows, num_warps):
 
         # select events, flow and original timestamps (for scaling)
         # advanced indexing copies
-        select_events = events[:, t_events]
-        select_flow = flows[:, t_flow]
+        fw_mask = events[..., 2] < d - i
+        bw_mask = events[..., 2] >= i
+        select_events = torch.cat([events[fw_mask].view(b, -1, 5), events[bw_mask].view(b, -1, 5)])
 
         # sample flow that will warp events at event locations
         # ensure integer t because we don't want bilinear there
         # (is a concat of fw/bw, not chronological)
-        select_event_flow = get_event_flow_3d(select_events, select_flow)
+        select_event_flow = get_event_flow_3d(select_events, flows)
 
         # fw/bw warp events to reference time
         # overwrite ts with reference time
