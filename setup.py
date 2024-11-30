@@ -18,12 +18,12 @@ setup(
     ext_modules=[
         CUDAExtension(
             "iterative_3d_warp_cuda._C",
-            ["iterative_3d_warp/extension.cpp", "iterative_3d_warp/kernel.cu"],
+            ["cuda_3d_ops/iterative_3d_warp/extension.cpp", "cuda_3d_ops/iterative_3d_warp/kernel.cu"],
             extra_compile_args={"cxx": ["-O3"], "nvcc": ["-O3"]},
         ),
         CUDAExtension(
             "trilinear_splat_cuda._C",
-            ["trilinear_splat/extension.cpp", "trilinear_splat/kernel.cu"],
+            ["cuda_3d_ops/trilinear_splat/extension.cpp", "cuda_3d_ops/trilinear_splat/kernel.cu"],
             extra_compile_args={"cxx": ["-O3"], "nvcc": ["-O3"]},
         ),
     ],
