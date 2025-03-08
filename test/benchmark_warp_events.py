@@ -27,6 +27,9 @@ if __name__ == "__main__":
         for i in range(d):
             events[:, i, :, 2] += i  # z
             events[:, i, :, 3] = i  # zi = floor(z)
+        if n > 1:
+            p10 = n // 10
+            events[:, :, -p10:, -1] = 0  # set 10% to padding
         events_.append(events)
         # flows
         # (b, d, h, w, 2) tensor with (u, v) flow from z to z+1 in last dim
