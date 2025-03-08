@@ -189,4 +189,4 @@ if __name__ == "__main__":
     axs[1, 0].set_ylabel("peak delta memory [MB]")
     fig.suptitle("Warping and splatting events: torch vs cuda", fontweight="bold", fontsize=18)
     fig.tight_layout()
-    plt.savefig(Path(__file__).parent / "benchmark_warp_events.pdf", bbox_inches="tight", transparent=True)
+    plt.savefig(Path(__file__).parent / "benchmark_warp_events_4090.pdf", bbox_inches="tight", transparent=True)
