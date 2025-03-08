@@ -14,3 +14,8 @@ pip install .
 # or
 pip install git+ssh://git@github.com/tudelft/cuda_event_ops
 ```
+
+On Jetson, you can use [`jetson-containers`](https://github.com/dusty-nv/jetson-containers) make a container that can build the package:
+```
+jetson-containers build --name ceo cuda:12.2 pytorch:2.4
+```
